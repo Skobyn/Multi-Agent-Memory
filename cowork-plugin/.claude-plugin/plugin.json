@@ -1,0 +1,8 @@
+{
+  "name": "dual-agent-memory",
+  "version": "0.1.0",
+  "description": "Epistemic monitor that prevents context loss in long-running sessions. Detects contradictions, scores confidence against a persistent archive, and interrupts before the agent acts on incomplete information.",
+  "author": {
+    "name": "Dual Agent Memory"
+  }
+}
