@@ -1,0 +1,737 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 440002,
+    "window_size": 2000,
+    "run_index": 2,
+    "config_hash": "80117906e8f0200b",
+    "timestamp": "2026-03-05T09:23:48-0600"
+  },
+  "config": {
+    "window_size": 2000,
+    "n_decisions": 50,
+    "n_false_positives": 10,
+    "compaction_keep_proportional": 200,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 0.36,
+      "decisions_recalled": 50,
+      "decisions_accurate": 50,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 100,
+      "entities_total": 100,
+      "decisions_in_briefing": 18
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 6,
+      "recall_rate": 0.12,
+      "keep_recent": 200
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 0,
+      "recall_rate": 0.0,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.6647706150106387,
+    "search_latency_s": {
+      "mean": 0.00973537162062712,
+      "median": 0.009263273001124617,
+      "p95": 0.013144033990101889,
+      "p99": 0.013712506988667883,
+      "std": 0.0017967343438500844,
+      "samples": 50
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.015223395899229218,
+      "median": 0.013688417508092243,
+      "p95": 0.033887479003169574,
+      "p99": 0.044470602995716035,
+      "std": 0.010687629831241005,
+      "samples": 50
+    },
+    "briefing_latency_s": 0.004569683005684055
+  },
+  "scaling": {
+    "chunks_in_archive": 2025,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "observability",
+      "decision": "OpenTelemetry",
+      "alt": "Jaeger",
+      "turn": 97,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.010321469002519734,
+      "on_assistant_latency_s": 0.014466895998339169
+    },
+    {
+      "topic": "logging",
+      "decision": "structured JSON logs with ELK",
+      "alt": "plain text logs",
+      "turn": 107,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011446931006503291,
+      "on_assistant_latency_s": 0.0036110180080868304
+    },
+    {
+      "topic": "websocket",
+      "decision": "Socket.IO",
+      "alt": "native WebSockets",
+      "turn": 203,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00822563999099657,
+      "on_assistant_latency_s": 0.0035418309998931363
+    },
+    {
+      "topic": "code formatter",
+      "decision": "Black",
+      "alt": "autopep8",
+      "turn": 263,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011260514002060518,
+      "on_assistant_latency_s": 0.003685068993945606
+    },
+    {
+      "topic": "DNS provider",
+      "decision": "Cloudflare",
+      "alt": "Route 53",
+      "turn": 265,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009536128010950051,
+      "on_assistant_latency_s": 0.033887479003169574
+    },
+    {
+      "topic": "state management",
+      "decision": "Redux Toolkit",
+      "alt": "Zustand",
+      "turn": 297,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008749330998398364,
+      "on_assistant_latency_s": 0.013107673003105447
+    },
+    {
+      "topic": "search engine",
+      "decision": "Elasticsearch",
+      "alt": "Algolia",
+      "turn": 339,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007680679991608486,
+      "on_assistant_latency_s": 0.012041455993312411
+    },
+    {
+      "topic": "API style",
+      "decision": "REST with OpenAPI",
+      "alt": "GraphQL",
+      "turn": 399,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007542357008787803,
+      "on_assistant_latency_s": 0.021438702999148518
+    },
+    {
+      "topic": "test runner",
+      "decision": "Vitest",
+      "alt": "Jest",
+      "turn": 423,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008549941994715482,
+      "on_assistant_latency_s": 0.020600036994437687
+    },
+    {
+      "topic": "authentication",
+      "decision": "JWT with refresh tokens",
+      "alt": "OAuth2",
+      "turn": 483,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011724972006049938,
+      "on_assistant_latency_s": 0.0036662939965026453
+    },
+    {
+      "topic": "type checker",
+      "decision": "mypy",
+      "alt": "pyright",
+      "turn": 519,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00939549200120382,
+      "on_assistant_latency_s": 0.0037869950028834864
+    },
+    {
+      "topic": "load balancer",
+      "decision": "ALB",
+      "alt": "nginx reverse proxy",
+      "turn": 597,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009153066988801584,
+      "on_assistant_latency_s": 0.0038939259975450113
+    },
+    {
+      "topic": "session storage",
+      "decision": "Redis sessions",
+      "alt": "database sessions",
+      "turn": 699,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009394506007083692,
+      "on_assistant_latency_s": 0.0035878749913536012
+    },
+    {
+      "topic": "secrets management",
+      "decision": "HashiCorp Vault",
+      "alt": "AWS Secrets Manager",
+      "turn": 723,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008659778002765961,
+      "on_assistant_latency_s": 0.044470602995716035
+    },
+    {
+      "topic": "PDF generation",
+      "decision": "Puppeteer",
+      "alt": "wkhtmltopdf",
+      "turn": 741,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007823250998626463,
+      "on_assistant_latency_s": 0.022957922992645763
+    },
+    {
+      "topic": "container registry",
+      "decision": "ECR",
+      "alt": "Docker Hub",
+      "turn": 821,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008504981989972293,
+      "on_assistant_latency_s": 0.028969456994673237
+    },
+    {
+      "topic": "analytics",
+      "decision": "Mixpanel",
+      "alt": "Google Analytics",
+      "turn": 911,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00930768701073248,
+      "on_assistant_latency_s": 0.029452415998093784
+    },
+    {
+      "topic": "file storage",
+      "decision": "S3 with CloudFront CDN",
+      "alt": "GCS",
+      "turn": 915,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.013712506988667883,
+      "on_assistant_latency_s": 0.024982667004223913
+    },
+    {
+      "topic": "caching",
+      "decision": "Redis",
+      "alt": "Memcached",
+      "turn": 947,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009369690000312403,
+      "on_assistant_latency_s": 0.011908974003745243
+    },
+    {
+      "topic": "linter",
+      "decision": "ruff",
+      "alt": "flake8",
+      "turn": 957,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008401879997109063,
+      "on_assistant_latency_s": 0.003111129000899382
+    },
+    {
+      "topic": "mobile framework",
+      "decision": "React Native",
+      "alt": "Flutter",
+      "turn": 959,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007811729999957606,
+      "on_assistant_latency_s": 0.013562698004534468
+    },
+    {
+      "topic": "email service",
+      "decision": "SendGrid",
+      "alt": "AWS SES",
+      "turn": 971,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.010593019993393682,
+      "on_assistant_latency_s": 0.017832301004091278
+    },
+    {
+      "topic": "CSS framework",
+      "decision": "Tailwind CSS",
+      "alt": "styled-components",
+      "turn": 999,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007574664996354841,
+      "on_assistant_latency_s": 0.01753404800547287
+    },
+    {
+      "topic": "feature flags",
+      "decision": "LaunchDarkly",
+      "alt": "custom implementation",
+      "turn": 1007,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007580019999295473,
+      "on_assistant_latency_s": 0.0032715160050429404
+    },
+    {
+      "topic": "authentication flow",
+      "decision": "OAuth2 PKCE",
+      "alt": "session cookies",
+      "turn": 1045,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008434645002125762,
+      "on_assistant_latency_s": 0.006710006011417136
+    },
+    {
+      "topic": "time series DB",
+      "decision": "InfluxDB",
+      "alt": "TimescaleDB",
+      "turn": 1073,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0134874600043986,
+      "on_assistant_latency_s": 0.010363673995016143
+    },
+    {
+      "topic": "rate limiting",
+      "decision": "token bucket at 100 req/s",
+      "alt": "sliding window",
+      "turn": 1139,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011111415005871095,
+      "on_assistant_latency_s": 0.006335414000204764
+    },
+    {
+      "topic": "backup strategy",
+      "decision": "daily S3 snapshots",
+      "alt": "continuous replication",
+      "turn": 1241,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.01005539701145608,
+      "on_assistant_latency_s": 0.0032842390064615756
+    },
+    {
+      "topic": "task scheduler",
+      "decision": "Celery with Redis broker",
+      "alt": "APScheduler",
+      "turn": 1263,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007748246003757231,
+      "on_assistant_latency_s": 0.003877641007420607
+    },
+    {
+      "topic": "database migration",
+      "decision": "Alembic",
+      "alt": "Django migrations",
+      "turn": 1265,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.012804956000763923,
+      "on_assistant_latency_s": 0.015400659991428256
+    },
+    {
+      "topic": "documentation",
+      "decision": "Swagger UI",
+      "alt": "Redoc",
+      "turn": 1279,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00769125200167764,
+      "on_assistant_latency_s": 0.010784449987113476
+    },
+    {
+      "topic": "service mesh",
+      "decision": "Istio",
+      "alt": "Linkerd",
+      "turn": 1315,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.01029414200456813,
+      "on_assistant_latency_s": 0.012791700995876454
+    },
+    {
+      "topic": "API gateway",
+      "decision": "Kong",
+      "alt": "AWS API Gateway",
+      "turn": 1321,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007897073999629356,
+      "on_assistant_latency_s": 0.03516758400655817
+    },
+    {
+      "topic": "testing",
+      "decision": "pytest with 80% coverage target",
+      "alt": "unittest",
+      "turn": 1339,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.01009658099792432,
+      "on_assistant_latency_s": 0.003408721007872373
+    },
+    {
+      "topic": "error tracking",
+      "decision": "Sentry",
+      "alt": "Rollbar",
+      "turn": 1397,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.007899392003309913,
+      "on_assistant_latency_s": 0.013814137011650018
+    },
+    {
+      "topic": "message queue",
+      "decision": "RabbitMQ",
+      "alt": "Kafka",
+      "turn": 1411,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.012875836997409351,
+      "on_assistant_latency_s": 0.01209696200385224
+    },
+    {
+      "topic": "notification service",
+      "decision": "Firebase Cloud Messaging",
+      "alt": "OneSignal",
+      "turn": 1455,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009861149999778718,
+      "on_assistant_latency_s": 0.0037139780033612624
+    },
+    {
+      "topic": "CI/CD",
+      "decision": "GitHub Actions",
+      "alt": "GitLab CI",
+      "turn": 1519,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008319573011249304,
+      "on_assistant_latency_s": 0.026496305988985114
+    },
+    {
+      "topic": "graph database",
+      "decision": "Neo4j",
+      "alt": "Amazon Neptune",
+      "turn": 1527,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.012586209995788522,
+      "on_assistant_latency_s": 0.029572261992143467
+    },
+    {
+      "topic": "A/B testing",
+      "decision": "Optimizely",
+      "alt": "custom split tests",
+      "turn": 1633,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00830232200678438,
+      "on_assistant_latency_s": 0.014101266991929151
+    },
+    {
+      "topic": "deployment",
+      "decision": "Kubernetes on AWS",
+      "alt": "Docker Swarm",
+      "turn": 1659,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009007830987684429,
+      "on_assistant_latency_s": 0.025788897997699678
+    },
+    {
+      "topic": "image processing",
+      "decision": "Sharp via Node",
+      "alt": "Pillow in Python",
+      "turn": 1675,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.01148553000530228,
+      "on_assistant_latency_s": 0.017337447992758825
+    },
+    {
+      "topic": "infrastructure as code",
+      "decision": "Terraform",
+      "alt": "Pulumi",
+      "turn": 1683,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011295759002678096,
+      "on_assistant_latency_s": 0.020463601002120413
+    },
+    {
+      "topic": "database",
+      "decision": "PostgreSQL",
+      "alt": "MongoDB",
+      "turn": 1691,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009105635996093042,
+      "on_assistant_latency_s": 0.004486771998926997
+    },
+    {
+      "topic": "monitoring",
+      "decision": "Datadog with PagerDuty",
+      "alt": "Prometheus/Grafana",
+      "turn": 1827,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.012328952012467198,
+      "on_assistant_latency_s": 0.024569250992499292
+    },
+    {
+      "topic": "ORM",
+      "decision": "SQLAlchemy",
+      "alt": "Django ORM",
+      "turn": 1849,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.013144033990101889,
+      "on_assistant_latency_s": 0.032900223988690414
+    },
+    {
+      "topic": "frontend",
+      "decision": "React with TypeScript",
+      "alt": "Vue.js",
+      "turn": 1873,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.009218858991516754,
+      "on_assistant_latency_s": 0.014068328993744217
+    },
+    {
+      "topic": "CDN",
+      "decision": "CloudFront",
+      "alt": "Fastly",
+      "turn": 1893,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008631713993963785,
+      "on_assistant_latency_s": 0.02963176900811959
+    },
+    {
+      "topic": "bundler",
+      "decision": "Vite",
+      "alt": "webpack",
+      "turn": 1943,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.008853128005284816,
+      "on_assistant_latency_s": 0.00383755199436564
+    },
+    {
+      "topic": "API versioning",
+      "decision": "URL path versioning",
+      "alt": "header versioning",
+      "turn": 1965,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.011911247012903914,
+      "on_assistant_latency_s": 0.020797965000383556
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "caching",
+      "statement": "As we decided, we're using Redis for caching.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "notification service",
+      "statement": "As we decided, we're using Firebase Cloud Messaging for notification service.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "service mesh",
+      "statement": "As we decided, we're using Istio for service mesh.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "search engine",
+      "statement": "As we decided, we're using Elasticsearch for search engine.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "authentication",
+      "statement": "As we decided, we're using JWT with refresh tokens for authentication.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "rate limiting",
+      "statement": "As we decided, we're using token bucket at 100 req/s for rate limiting.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "state management",
+      "statement": "As we decided, we're using Redux Toolkit for state management.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "frontend",
+      "statement": "As we decided, we're using React with TypeScript for frontend.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "linter",
+      "statement": "As we decided, we're using ruff for linter.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "feature flags",
+      "statement": "As we decided, we're using LaunchDarkly for feature flags.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 420500,
+    "window_size": 50,
+    "run_index": 0,
+    "config_hash": "007b39e3ce79da65",
+    "timestamp": "2026-03-05T09:23:30-0600"
+  },
+  "config": {
+    "window_size": 50,
+    "n_decisions": 2,
+    "n_false_positives": 2,
+    "compaction_keep_proportional": 10,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 1.0,
+      "decisions_recalled": 2,
+      "decisions_accurate": 2,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 4,
+      "entities_total": 4,
+      "decisions_in_briefing": 2
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 1,
+      "recall_rate": 0.5,
+      "keep_recent": 10
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 1,
+      "recall_rate": 0.5,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.017704023004625924,
+    "search_latency_s": {
+      "mean": 0.0004083065068698488,
+      "median": 0.0004083065068698488,
+      "p95": 0.0005025690043112263,
+      "p99": 0.0005025690043112263,
+      "std": 0.00013330730230475522,
+      "samples": 2
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.0006489459992735647,
+      "median": 0.0006489459992735647,
+      "p95": 0.0007975189946591854,
+      "p99": 0.0007975189946591854,
+      "std": 0.00021011394507674012,
+      "samples": 2
+    },
+    "briefing_latency_s": 0.00010501299402676523
+  },
+  "scaling": {
+    "chunks_in_archive": 50,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "notification service",
+      "decision": "Firebase Cloud Messaging",
+      "alt": "OneSignal",
+      "turn": 27,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005025690043112263,
+      "on_assistant_latency_s": 0.0005003730038879439
+    },
+    {
+      "topic": "container registry",
+      "decision": "ECR",
+      "alt": "Docker Hub",
+      "turn": 47,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0003140440094284713,
+      "on_assistant_latency_s": 0.0007975189946591854
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "notification service",
+      "statement": "As we decided, we're using Firebase Cloud Messaging for notification service.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "container registry",
+      "statement": "As we decided, we're using ECR for container registry.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}

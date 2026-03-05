@@ -1,0 +1,257 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 422002,
+    "window_size": 200,
+    "run_index": 2,
+    "config_hash": "b8da2c0c3ed0aa7e",
+    "timestamp": "2026-03-05T09:23:32-0600"
+  },
+  "config": {
+    "window_size": 200,
+    "n_decisions": 10,
+    "n_false_positives": 10,
+    "compaction_keep_proportional": 20,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 0.8,
+      "decisions_recalled": 10,
+      "decisions_accurate": 10,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 20,
+      "entities_total": 20,
+      "decisions_in_briefing": 8
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 2,
+      "recall_rate": 0.2,
+      "keep_recent": 20
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 1,
+      "recall_rate": 0.1,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.03927011298947036,
+    "search_latency_s": {
+      "mean": 0.0009537537989672273,
+      "median": 0.0008591815058025531,
+      "p95": 0.0013337159907678142,
+      "p99": 0.0013337159907678142,
+      "std": 0.00018999539131436057,
+      "samples": 10
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.0015645980020053685,
+      "median": 0.0014255159985623322,
+      "p95": 0.003080906011746265,
+      "p99": 0.003080906011746265,
+      "std": 0.001008806529967243,
+      "samples": 10
+    },
+    "briefing_latency_s": 0.00021045900939498097
+  },
+  "scaling": {
+    "chunks_in_archive": 200,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "service mesh",
+      "decision": "Istio",
+      "alt": "Linkerd",
+      "turn": 15,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0009746040013851598,
+      "on_assistant_latency_s": 0.0010937990009551868
+    },
+    {
+      "topic": "analytics",
+      "decision": "Mixpanel",
+      "alt": "Google Analytics",
+      "turn": 41,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0007597840012749657,
+      "on_assistant_latency_s": 0.003080906011746265
+    },
+    {
+      "topic": "search engine",
+      "decision": "Elasticsearch",
+      "alt": "Algolia",
+      "turn": 89,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0013337159907678142,
+      "on_assistant_latency_s": 0.0017552459903527051
+    },
+    {
+      "topic": "time series DB",
+      "decision": "InfluxDB",
+      "alt": "TimescaleDB",
+      "turn": 95,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0009915109985740855,
+      "on_assistant_latency_s": 0.0015162009949563071
+    },
+    {
+      "topic": "authentication flow",
+      "decision": "OAuth2 PKCE",
+      "alt": "session cookies",
+      "turn": 109,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0012421619903761894,
+      "on_assistant_latency_s": 0.0004298679996281862
+    },
+    {
+      "topic": "frontend",
+      "decision": "React with TypeScript",
+      "alt": "Vue.js",
+      "turn": 131,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0008477039955323562,
+      "on_assistant_latency_s": 0.0013348310021683574
+    },
+    {
+      "topic": "logging",
+      "decision": "structured JSON logs with ELK",
+      "alt": "plain text logs",
+      "turn": 141,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0008513070060871542,
+      "on_assistant_latency_s": 0.00041586501174606383
+    },
+    {
+      "topic": "container registry",
+      "decision": "ECR",
+      "alt": "Docker Hub",
+      "turn": 143,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0008223370095947757,
+      "on_assistant_latency_s": 0.002660726007889025
+    },
+    {
+      "topic": "load balancer",
+      "decision": "ALB",
+      "alt": "nginx reverse proxy",
+      "turn": 189,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0008670560055179521,
+      "on_assistant_latency_s": 0.0005148170021129772
+    },
+    {
+      "topic": "CI/CD",
+      "decision": "GitHub Actions",
+      "alt": "GitLab CI",
+      "turn": 191,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0008473569905618206,
+      "on_assistant_latency_s": 0.002843720998498611
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "service mesh",
+      "statement": "As we decided, we're using Istio for service mesh.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "time series DB",
+      "statement": "As we decided, we're using InfluxDB for time series DB.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "frontend",
+      "statement": "As we decided, we're using React with TypeScript for frontend.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "CI/CD",
+      "statement": "As we decided, we're using GitHub Actions for CI/CD.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "authentication flow",
+      "statement": "As we decided, we're using OAuth2 PKCE for authentication flow.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "container registry",
+      "statement": "As we decided, we're using ECR for container registry.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "logging",
+      "statement": "As we decided, we're using structured JSON logs with ELK for logging.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "search engine",
+      "statement": "As we decided, we're using Elasticsearch for search engine.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "analytics",
+      "statement": "As we decided, we're using Mixpanel for analytics.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "load balancer",
+      "statement": "As we decided, we're using ALB for load balancer.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}

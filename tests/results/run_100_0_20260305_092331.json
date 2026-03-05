@@ -1,0 +1,167 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 421000,
+    "window_size": 100,
+    "run_index": 0,
+    "config_hash": "6dcfca9e428054fd",
+    "timestamp": "2026-03-05T09:23:31-0600"
+  },
+  "config": {
+    "window_size": 100,
+    "n_decisions": 5,
+    "n_false_positives": 5,
+    "compaction_keep_proportional": 10,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 1.0,
+      "decisions_recalled": 5,
+      "decisions_accurate": 5,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 10,
+      "entities_total": 10,
+      "decisions_in_briefing": 5
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 0,
+      "recall_rate": 0.0,
+      "keep_recent": 10
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 0,
+      "recall_rate": 0.0,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.02060222000000067,
+    "search_latency_s": {
+      "mean": 0.0005571855988819152,
+      "median": 0.0005433839978650212,
+      "p95": 0.0006613910081796348,
+      "p99": 0.0006613910081796348,
+      "std": 6.094687290928179e-05,
+      "samples": 5
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.0011581241997191682,
+      "median": 0.0010330099903512746,
+      "p95": 0.0019754540116991848,
+      "p99": 0.0019754540116991848,
+      "std": 0.0005851165037464807,
+      "samples": 5
+    },
+    "briefing_latency_s": 0.0001161620020866394
+  },
+  "scaling": {
+    "chunks_in_archive": 100,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "test runner",
+      "decision": "Vitest",
+      "alt": "Jest",
+      "turn": 3,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0006613910081796348,
+      "on_assistant_latency_s": 0.0006352909986162558
+    },
+    {
+      "topic": "API gateway",
+      "decision": "Kong",
+      "alt": "AWS API Gateway",
+      "turn": 5,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005006939900340512,
+      "on_assistant_latency_s": 0.0019754540116991848
+    },
+    {
+      "topic": "infrastructure as code",
+      "decision": "Terraform",
+      "alt": "Pulumi",
+      "turn": 35,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005433839978650212,
+      "on_assistant_latency_s": 0.0006273030012380332
+    },
+    {
+      "topic": "image processing",
+      "decision": "Sharp via Node",
+      "alt": "Pillow in Python",
+      "turn": 49,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005448399897431955,
+      "on_assistant_latency_s": 0.0010330099903512746
+    },
+    {
+      "topic": "ORM",
+      "decision": "SQLAlchemy",
+      "alt": "Django ORM",
+      "turn": 67,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005356190085876733,
+      "on_assistant_latency_s": 0.0015195629966910928
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "ORM",
+      "statement": "As we decided, we're using SQLAlchemy for ORM.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "infrastructure as code",
+      "statement": "As we decided, we're using Terraform for infrastructure as code.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "test runner",
+      "statement": "As we decided, we're using Vitest for test runner.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "image processing",
+      "statement": "As we decided, we're using Sharp via Node for image processing.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "API gateway",
+      "statement": "As we decided, we're using Kong for API gateway.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}

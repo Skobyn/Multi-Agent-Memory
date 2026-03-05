@@ -1,0 +1,167 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 421004,
+    "window_size": 100,
+    "run_index": 4,
+    "config_hash": "14d840358237a129",
+    "timestamp": "2026-03-05T09:23:31-0600"
+  },
+  "config": {
+    "window_size": 100,
+    "n_decisions": 5,
+    "n_false_positives": 5,
+    "compaction_keep_proportional": 10,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 0.8,
+      "decisions_recalled": 5,
+      "decisions_accurate": 5,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 10,
+      "entities_total": 10,
+      "decisions_in_briefing": 4
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 1,
+      "recall_rate": 0.2,
+      "keep_recent": 10
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 1,
+      "recall_rate": 0.2,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.021857952000573277,
+    "search_latency_s": {
+      "mean": 0.0005632557993521913,
+      "median": 0.0005590179935097694,
+      "p95": 0.0006430100038414821,
+      "p99": 0.0006430100038414821,
+      "std": 6.510202969952783e-05,
+      "samples": 5
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.000414845603518188,
+      "median": 0.00029699500009883195,
+      "p95": 0.0006638170016231015,
+      "p99": 0.0006638170016231015,
+      "std": 0.0002081271252519922,
+      "samples": 5
+    },
+    "briefing_latency_s": 0.00031547300750389695
+  },
+  "scaling": {
+    "chunks_in_archive": 100,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "database",
+      "decision": "PostgreSQL",
+      "alt": "MongoDB",
+      "turn": 7,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0006138739991001785,
+      "on_assistant_latency_s": 0.00029699500009883195
+    },
+    {
+      "topic": "message queue",
+      "decision": "RabbitMQ",
+      "alt": "Kafka",
+      "turn": 53,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0006430100038414821,
+      "on_assistant_latency_s": 0.000618326012045145
+    },
+    {
+      "topic": "time series DB",
+      "decision": "InfluxDB",
+      "alt": "TimescaleDB",
+      "turn": 67,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005590179935097694,
+      "on_assistant_latency_s": 0.0006638170016231015
+    },
+    {
+      "topic": "load balancer",
+      "decision": "ALB",
+      "alt": "nginx reverse proxy",
+      "turn": 73,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0004948389978380874,
+      "on_assistant_latency_s": 0.0002454450004734099
+    },
+    {
+      "topic": "type checker",
+      "decision": "mypy",
+      "alt": "pyright",
+      "turn": 93,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.0005055380024714395,
+      "on_assistant_latency_s": 0.0002496450033504516
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "database",
+      "statement": "As we decided, we're using PostgreSQL for database.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "message queue",
+      "statement": "As we decided, we're using RabbitMQ for message queue.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "time series DB",
+      "statement": "As we decided, we're using InfluxDB for time series DB.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "load balancer",
+      "statement": "As we decided, we're using ALB for load balancer.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "type checker",
+      "statement": "As we decided, we're using mypy for type checker.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}

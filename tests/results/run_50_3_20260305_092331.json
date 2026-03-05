@@ -1,0 +1,113 @@
+{
+  "metadata": {
+    "git_commit": "0ba8eda42d48c9adef9bddf4d064b6767fe4e265",
+    "python_version": "3.10.12",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "sqlite_version": "3.37.2",
+    "sqlite_vec_available": false,
+    "system_memory_mb": 15720,
+    "seed": 420503,
+    "window_size": 50,
+    "run_index": 3,
+    "config_hash": "8b26b302cf9dd3b8",
+    "timestamp": "2026-03-05T09:23:31-0600"
+  },
+  "config": {
+    "window_size": 50,
+    "n_decisions": 2,
+    "n_false_positives": 2,
+    "compaction_keep_proportional": 10,
+    "compaction_keep_fixed10": 10
+  },
+  "retention": {
+    "with_memory": {
+      "decision_recall_rate": 1.0,
+      "decision_accuracy_rate": 1.0,
+      "entity_recall_rate": 1.0,
+      "contradiction_detection_rate": 0.0,
+      "false_positive_rate": 0.0,
+      "briefing_coverage": 1.0,
+      "decisions_recalled": 2,
+      "decisions_accurate": 2,
+      "contradictions_detected": 0,
+      "false_positives_flagged": 0,
+      "entities_recalled": 4,
+      "entities_total": 4,
+      "decisions_in_briefing": 2
+    },
+    "without_memory_proportional": {
+      "decisions_recalled": 0,
+      "recall_rate": 0.0,
+      "keep_recent": 10
+    },
+    "without_memory_fixed10": {
+      "decisions_recalled": 0,
+      "recall_rate": 0.0,
+      "keep_recent": 10
+    }
+  },
+  "performance": {
+    "archive_latency_s": 0.01180066000961233,
+    "search_latency_s": {
+      "mean": 0.0003531079928507097,
+      "median": 0.0003531079928507097,
+      "p95": 0.00042624799243640155,
+      "p99": 0.00042624799243640155,
+      "std": 0.00010343557936604795,
+      "samples": 2
+    },
+    "on_assistant_latency_s": {
+      "mean": 0.0003416779945837334,
+      "median": 0.0003416779945837334,
+      "p95": 0.00038831699930597097,
+      "p99": 0.00038831699930597097,
+      "std": 6.595751301377123e-05,
+      "samples": 2
+    },
+    "briefing_latency_s": 7.106999692041427e-05
+  },
+  "scaling": {
+    "chunks_in_archive": 50,
+    "db_size_bytes": 4096
+  },
+  "per_decision_detail": [
+    {
+      "topic": "state management",
+      "decision": "Redux Toolkit",
+      "alt": "Zustand",
+      "turn": 19,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00042624799243640155,
+      "on_assistant_latency_s": 0.00038831699930597097
+    },
+    {
+      "topic": "mobile framework",
+      "decision": "React Native",
+      "alt": "Flutter",
+      "turn": 25,
+      "recalled": true,
+      "accurate": true,
+      "contradiction_detected": false,
+      "search_score": 0.004918032786885246,
+      "search_latency_s": 0.00027996799326501787,
+      "on_assistant_latency_s": 0.0002950389898614958
+    }
+  ],
+  "false_positive_detail": [
+    {
+      "topic": "state management",
+      "statement": "As we decided, we're using Redux Toolkit for state management.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    },
+    {
+      "topic": "mobile framework",
+      "statement": "As we decided, we're using React Native for mobile framework.",
+      "is_consistent": true,
+      "flagged_as_contradiction": false
+    }
+  ]
+}
