@@ -74,7 +74,7 @@ User message --> Main Agent reply --> User message --> ...
 
 ## Integration
 
-Three ways to use this system depending on your platform. No pip install required for any of them.
+Four ways to use this system depending on your platform:
 
 ### Option 1: Claude Code (MCP Server)
 
@@ -126,7 +126,103 @@ If `memory_observe` or `memory_evaluate` returns an interrupt:
 
 ---
 
-### Option 2: Claude Cowork (Plugin)
+### Option 2: OpenClaw Plugin
+
+A native TypeScript OpenClaw plugin lives in `openclaw-plugin/`. It registers a **Context Engine** (handles archival and context assembly), **Agent Tools** (search, evaluate, briefing, archive, status), an **Epistemic Monitor** lifecycle hook, a **CLI command**, and a **background consolidation service** — all in one plugin.
+
+**Prerequisites:**
+
+- Node.js 22+
+- OpenClaw installed (`npm i -g openclaw`)
+- `better-sqlite3` (peer dependency — installed automatically by OpenClaw)
+
+**Install:**
+
+```bash
+# Local development (symlink — changes take effect on restart)
+openclaw plugins install -l ./openclaw-plugin
+
+# Or from npm (once published)
+openclaw plugins install @dual-agent-memory/openclaw-plugin
+```
+
+**Configure** in your `openclaw.config.json`:
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "contextEngine": "dual-agent-memory"
+    },
+    "entries": {
+      "dual-agent-memory": {
+        "enabled": true,
+        "config": {
+          "dbPath": "~/.dual_agent_memory/memory.db",
+          "softNudgeThreshold": 0.7,
+          "hardInterruptThreshold": 0.5,
+          "searchTopK": 5,
+          "vectorWeight": 0.7,
+          "keywordWeight": 0.3,
+          "autoEvaluate": true,
+          "autoArchiveOnCompact": true
+        }
+      }
+    }
+  }
+}
+```
+
+All config fields are optional — defaults match the values shown above.
+
+**What the plugin does automatically:**
+
+- **Context Engine** — archives the full conversation before compaction (zero message loss) and injects relevant archived context into prompts during assembly.
+- **Epistemic Monitor** (`before_prompt_build` hook) — evaluates every assistant turn against the archive. When contradictions, gaps, or topic drift are detected, warnings are injected into the system context so the agent self-corrects.
+- **Background Consolidation** — a service runs every 5 minutes to mark older superseded decisions, keeping the archive clean while preserving the audit trail.
+
+**Agent tools registered:**
+
+| Tool | Purpose |
+|---|---|
+| `memory_search` | Hybrid vector + keyword search over archived conversations |
+| `memory_evaluate` | Score an output for confidence (0-1), detect contradictions and gaps |
+| `memory_briefing` | Session-start briefing with prior decisions, topics, entities |
+| `memory_archive` | Manually archive messages to the store |
+| `memory_status` | View archive size, config, observed turns |
+
+**CLI commands:**
+
+```bash
+openclaw memory status       # Archive size, session info, DB path
+openclaw memory search "authentication decisions"   # Search with hybrid retrieval
+openclaw memory decisions    # List all archived decisions chronologically
+```
+
+**Plugin structure:**
+
+```
+openclaw-plugin/
+  openclaw.plugin.json    # Plugin manifest with config schema + UI hints
+  package.json            # npm metadata with openclaw.extensions
+  tsconfig.json           # TypeScript config
+  src/
+    index.ts              # All registrations (context engine, tools, hook, CLI, service)
+  tests/
+    index.test.ts         # Vitest tests covering registration and tool behavior
+```
+
+**Run plugin tests:**
+
+```bash
+cd openclaw-plugin
+npm install
+npx vitest run
+```
+
+---
+
+### Option 3: Claude Cowork (Plugin)
 
 A ready-made Cowork plugin lives in `cowork-plugin/`. It provides slash commands, always-on skills, and connects to the same MCP server.
 
@@ -168,7 +264,7 @@ cowork-plugin/
 
 ---
 
-### Option 3: OpenClaw / Python Agent Frameworks
+### Option 4: Python Agent Frameworks (OpenClaw Python, LangChain, CrewAI, etc.)
 
 Works with OpenClaw, LangChain, CrewAI, custom loops, or any Python-based agent. Import directly from the source tree.
 
@@ -305,6 +401,7 @@ PYTHONPATH=src pytest tests/ -v
 | `cost.py` | `CostTracker` | Token accounting with per-model USD estimates and use-case thresholds. |
 | `server.py` | `MemoryMCPServer` | MCP server (JSON-RPC 2.0 over stdio) exposing 6 tools. |
 | `integration.py` | `DualAgentMemory` | High-level API for any Python agent framework. |
+| `openclaw-plugin/src/index.ts` | `dualAgentMemoryPlugin` | OpenClaw plugin: context engine + tools + epistemic hook + CLI + consolidation service. |
 
 ## Confidence Score Thresholds
 

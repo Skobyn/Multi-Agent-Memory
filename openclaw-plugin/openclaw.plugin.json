@@ -1,0 +1,86 @@
+{
+  "id": "dual-agent-memory",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "dbPath": {
+        "type": "string",
+        "description": "Path to the SQLite memory database. Defaults to ~/.dual_agent_memory/memory.db"
+      },
+      "embeddingDim": {
+        "type": "integer",
+        "default": 384,
+        "description": "Dimension of embedding vectors"
+      },
+      "softNudgeThreshold": {
+        "type": "number",
+        "default": 0.7,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence score below which a soft nudge interrupt fires"
+      },
+      "hardInterruptThreshold": {
+        "type": "number",
+        "default": 0.5,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence score below which a hard interrupt fires"
+      },
+      "searchTopK": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 50,
+        "description": "Default number of search results returned"
+      },
+      "maxChunkTokens": {
+        "type": "integer",
+        "default": 512,
+        "description": "Maximum token length per memory chunk"
+      },
+      "keywordWeight": {
+        "type": "number",
+        "default": 0.3,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Weight for keyword score in hybrid search"
+      },
+      "vectorWeight": {
+        "type": "number",
+        "default": 0.7,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Weight for vector similarity in hybrid search"
+      },
+      "maxObservedTurns": {
+        "type": "integer",
+        "default": 50,
+        "description": "Maximum turns held before self-compaction"
+      },
+      "autoEvaluate": {
+        "type": "boolean",
+        "default": true,
+        "description": "Automatically evaluate assistant outputs against the archive"
+      },
+      "autoArchiveOnCompact": {
+        "type": "boolean",
+        "default": true,
+        "description": "Automatically archive conversation before context compaction"
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "dbPath": { "label": "Database Path", "placeholder": "~/.dual_agent_memory/memory.db" },
+    "embeddingDim": { "label": "Embedding Dimensions" },
+    "softNudgeThreshold": { "label": "Soft Nudge Threshold" },
+    "hardInterruptThreshold": { "label": "Hard Interrupt Threshold" },
+    "searchTopK": { "label": "Search Top K" },
+    "maxChunkTokens": { "label": "Max Chunk Tokens" },
+    "keywordWeight": { "label": "Keyword Weight" },
+    "vectorWeight": { "label": "Vector Weight" },
+    "maxObservedTurns": { "label": "Max Observed Turns" },
+    "autoEvaluate": { "label": "Auto-Evaluate Outputs" },
+    "autoArchiveOnCompact": { "label": "Auto-Archive on Compact" }
+  }
+}
