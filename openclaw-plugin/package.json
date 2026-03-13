@@ -1,6 +1,6 @@
 {
   "name": "openclaw-dual-agent-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenClaw plugin providing context-archive memory and epistemic trust monitoring for AI agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
   ],
   "openclaw": {
     "extensions": [
-      "./src/index.ts"
+      "./dist/index.js"
     ]
   },
   "scripts": {
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/dual-agent-memory"
+    "url": "https://github.com/Skobyn/Multi-Agent-Memory"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
