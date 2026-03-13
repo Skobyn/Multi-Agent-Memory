@@ -12,7 +12,7 @@
  * warnings and confidence signals into the system context.
  */
 
-import type { PluginAPI } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -659,7 +659,7 @@ function scoreConfidence(
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
-export default function dualAgentMemoryPlugin(api: PluginAPI) {
+export default function dualAgentMemoryPlugin(api: OpenClawPluginApi) {
   const cfg: PluginConfig = (api as any).config ?? {};
   const dbPath = cfg.dbPath ?? `${process.env.HOME ?? "/tmp"}/.dual_agent_memory/memory.db`;
   const dim = cfg.embeddingDim ?? 384;
@@ -690,17 +690,19 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
   // 1. CONTEXT ENGINE — manages archival and context assembly
   // -----------------------------------------------------------------
   api.registerContextEngine("dual-agent-memory", () => ({
-    info: { id: "dual-agent-memory", ownsCompaction: true },
+    info: { id: "dual-agent-memory", name: "Dual Agent Memory", ownsCompaction: true },
 
-    async bootstrap() {
+    async bootstrap(_params: { sessionId: string; sessionKey?: string; sessionFile: string }) {
       api.logger.info(
         `[dual-agent-memory] Context engine bootstrapped. Archive has ${archive.countChunks()} chunks.`
       );
+      return { bootstrapped: true };
     },
 
-    async ingest(_ctx: any, message: { role: string; content: string }) {
+    async ingest(params: { sessionId: string; sessionKey?: string; message: any; isHeartbeat?: boolean }) {
+      const message = params.message;
       // Record every message in the observation buffer
-      observedTurns.push({ role: message.role, content: message.content });
+      observedTurns.push({ role: message.role, content: message.content ?? "" });
 
       // Self-compact if buffer grows too large
       if (observedTurns.length > maxObservedTurns) {
@@ -719,7 +721,8 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       return { ingested: true };
     },
 
-    async assemble({ messages, tokenBudget }: { messages: any[]; tokenBudget: number }) {
+    async assemble(params: { sessionId: string; sessionKey?: string; messages: any[]; tokenBudget?: number }) {
+      const { messages } = params;
       // On assembly, inject a briefing of relevant archived context
       const recent = observedTurns.slice(-5);
       const recentText = recent.map((t) => t.content).join(" ");
@@ -732,7 +735,7 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
 
         // Prepend archived context as a system message
         const archiveContent = `[Dual-Agent Memory — Archived Context]\n${contextBlock}`;
-        const archiveMsg = { role: "system", content: archiveContent };
+        const archiveMsg = { role: "system", content: archiveContent } as any;
         const estimatedTokens = Math.ceil(archiveContent.length / 4);
         return { messages: [archiveMsg, ...messages], estimatedTokens };
       }
@@ -740,9 +743,11 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       return { messages, estimatedTokens: 0 };
     },
 
-    async compact() {
+    async compact(_params: { sessionId: string; sessionKey?: string; sessionFile: string }) {
       // Archive all observed turns before compaction
-      if (!autoArchive || observedTurns.length === 0) return;
+      if (!autoArchive || observedTurns.length === 0) {
+        return { ok: true, compacted: false, reason: "nothing to compact" };
+      }
 
       const chunks = observedTurns.map((m, i) => {
         const c = chunkMessage(m.role, m.content, sessionId, i + 1, newChunkId);
@@ -753,31 +758,22 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       api.logger.info(
         `[dual-agent-memory] Archived ${chunks.length} chunks before compaction.`
       );
+      return { ok: true, compacted: true };
     },
 
-    async afterTurn(_ctx: any) {
-      // Epistemic evaluation happens in the hook (below), not here
-    },
-
-    async prepareSubagentSpawn() {
+    async prepareSubagentSpawn(_params: { parentSessionKey: string; childSessionKey: string; ttlMs?: number }) {
       // Give subagents a snapshot of recent decisions
       const decisions = archive.getAllDecisions().slice(-10);
-      return {
-        contextNote: decisions.length > 0
-          ? `Prior decisions: ${decisions.flatMap((d) => d.decisions).join("; ")}`
-          : undefined,
-      };
+      if (decisions.length > 0) {
+        api.logger.info(
+          `[dual-agent-memory] Prior decisions: ${decisions.flatMap((d) => d.decisions).join("; ")}`
+        );
+      }
+      return { rollback: () => {} };
     },
 
-    async onSubagentEnded(_ctx: any, result: any) {
-      // Archive subagent results if they contain decisions
-      if (result?.content) {
-        const c = chunkMessage("assistant", result.content, `subagent-${Date.now().toString(36)}`, 1, newChunkId);
-        if (c.decisions.length > 0) {
-          c.embedding = hashEmbed(c.content, dim);
-          archive.storeChunk(c);
-        }
-      }
+    async onSubagentEnded(_params: { childSessionKey: string; reason: string }) {
+      // Subagent ended — no-op for now (we archive via ingest)
     },
   }));
 
@@ -786,11 +782,11 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
   // -----------------------------------------------------------------
   if (autoEvaluate) {
     api.registerHook(
-      "before_prompt_build",
-      async (ctx: any) => {
+      "agent",
+      async (_event) => {
         // Find the latest assistant message in observed turns
         const lastAssistant = [...observedTurns].reverse().find((t) => t.role === "assistant");
-        if (!lastAssistant) return {};
+        if (!lastAssistant) return;
 
         // Build context summary from recent observed turns
         const contextSummary = observedTurns.slice(-10).map((t) => t.content).join("\n");
@@ -800,9 +796,9 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
           contextSummary,
         );
 
-        if (signal.flags.length === 0) return {};
+        if (signal.flags.length === 0) return;
 
-        // Inject epistemic warning into system context
+        // Log epistemic warning
         const parts: string[] = [`[Epistemic Monitor] Confidence: ${signal.score}`];
         if (signal.flags.length) parts.push(`Flags: ${signal.flags.join(", ")}`);
         parts.push(signal.recommendation);
@@ -814,7 +810,7 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
           );
         }
 
-        return { appendSystemContext: parts.join("\n") };
+        api.logger.warn(parts.join("\n"));
       },
       { name: "dual-agent-memory.epistemic-monitor" }
     );
@@ -838,30 +834,33 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       },
       required: ["query"],
     },
-    handler: async ({ query, top_k, session_id }: { query: string; top_k?: number; session_id?: string }) => {
+    execute: async (_toolCallId: string, params: any) => {
+      const { query, top_k, session_id } = params;
       const k = top_k ?? searchTopK;
       let results = hybridSearch(archive, query, dim, k, vectorWeight, keywordWeight);
       if (session_id) {
         results = results.filter((r) => r.chunk.session_id === session_id);
       }
       return {
-        query,
-        results: results.map((r) => ({
-          content: r.chunk.content,
-          session_id: r.chunk.session_id,
-          turn_id: r.chunk.turn_id,
-          role: r.chunk.role,
-          topics: r.chunk.topics,
-          entities: r.chunk.entities,
-          decisions: r.chunk.decisions,
-          timestamp: r.chunk.timestamp,
-          relevance_score: r.score,
-          match_type: r.match_type,
-        })),
-        total_results: results.length,
+        content: JSON.stringify({
+          query,
+          results: results.map((r) => ({
+            content: r.chunk.content,
+            session_id: r.chunk.session_id,
+            turn_id: r.chunk.turn_id,
+            role: r.chunk.role,
+            topics: r.chunk.topics,
+            entities: r.chunk.entities,
+            decisions: r.chunk.decisions,
+            timestamp: r.chunk.timestamp,
+            relevance_score: r.score,
+            match_type: r.match_type,
+          })),
+          total_results: results.length,
+        }),
       };
     },
-  });
+  } as any);
 
   api.registerTool({
     name: "memory_evaluate",
@@ -875,7 +874,8 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       },
       required: ["output_text"],
     },
-    handler: async ({ output_text }: { output_text: string }) => {
+    execute: async (_toolCallId: string, params: any) => {
+      const { output_text } = params;
       const contextSummary = observedTurns.slice(-10).map((t) => t.content).join("\n");
       const signal = scoreConfidence(
         output_text, archive, dim, vectorWeight, keywordWeight,
@@ -893,7 +893,7 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       if (signal.flags.includes("contradiction")) {
         result.interrupt = {
           severity: "hard_interrupt",
-          message: `CONTRADICTION: ${signal.citations.map((c) =>
+          message: `CONTRADICTION: ${signal.citations.map((c: any) =>
             `"${c.current_statement}" vs "${c.archived_statement}"`
           ).join("; ")}`,
           suggested_query: signal.citations[0]?.current_statement ?? "recent decisions",
@@ -912,9 +912,9 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
         };
       }
 
-      return result;
+      return { content: JSON.stringify(result) };
     },
-  });
+  } as any);
 
   api.registerTool({
     name: "memory_briefing",
@@ -928,7 +928,8 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       },
       required: ["session_id"],
     },
-    handler: async ({ session_id: sid }: { session_id: string }) => {
+    execute: async (_toolCallId: string, params: any) => {
+      const sid = params.session_id;
       const decisionChunks = archive.getAllDecisions().slice(-20);
       const allTopics = new Map<string, string>();
       const allEntities = new Map<string, string>();
@@ -957,9 +958,9 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       }
       lines.push("===");
 
-      return { session_id: sid, briefing: lines.join("\n"), archive_size: archive.countChunks() };
+      return { content: JSON.stringify({ session_id: sid, briefing: lines.join("\n"), archive_size: archive.countChunks() }) };
     },
-  });
+  } as any);
 
   api.registerTool({
     name: "memory_archive",
@@ -985,40 +986,45 @@ export default function dualAgentMemoryPlugin(api: PluginAPI) {
       },
       required: ["messages", "session_id"],
     },
-    handler: async ({ messages, session_id: sid }: { messages: { role: string; content: string }[]; session_id: string }) => {
+    execute: async (_toolCallId: string, params: any) => {
+      const { messages, session_id: sid } = params;
       const before = archive.countChunks();
-      const chunks = messages.map((m, i) => {
+      const chunks = messages.map((m: any, i: number) => {
         const c = chunkMessage(m.role, m.content, sid, i + 1, newChunkId);
         c.embedding = hashEmbed(c.content, dim);
         return c;
       });
       archive.storeChunks(chunks);
       return {
-        messages_captured: messages.length,
-        chunks_created: chunks.length,
-        chunks_before: before,
-        chunks_after: archive.countChunks(),
-        session_id: sid,
+        content: JSON.stringify({
+          messages_captured: messages.length,
+          chunks_created: chunks.length,
+          chunks_before: before,
+          chunks_after: archive.countChunks(),
+          session_id: sid,
+        }),
       };
     },
-  });
+  } as any);
 
   api.registerTool({
     name: "memory_status",
     description: "Get the current status of the memory system including archive size and monitor state.",
     parameters: { type: "object", properties: {} },
-    handler: async () => ({
-      archive_chunks: archive.countChunks(),
-      observed_turns: observedTurns.length,
-      has_rolling_summary: rollingSummary.length > 0,
-      session_id: sessionId,
-      config: {
-        dim, softThreshold, hardThreshold, searchTopK,
-        vectorWeight, keywordWeight, maxObservedTurns,
-        autoEvaluate, autoArchive,
-      },
+    execute: async () => ({
+      content: JSON.stringify({
+        archive_chunks: archive.countChunks(),
+        observed_turns: observedTurns.length,
+        has_rolling_summary: rollingSummary.length > 0,
+        session_id: sessionId,
+        config: {
+          dim, softThreshold, hardThreshold, searchTopK,
+          vectorWeight, keywordWeight, maxObservedTurns,
+          autoEvaluate, autoArchive,
+        },
+      }),
     }),
-  });
+  } as any);
 
   // -----------------------------------------------------------------
   // 4. CLI COMMAND — `openclaw memory <subcommand>`

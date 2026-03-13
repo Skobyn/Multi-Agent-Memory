@@ -18,3 +18,5 @@ env/
 .DS_Store
 Thumbs.db
 *.zip
+node_modules/
+package-lock.json

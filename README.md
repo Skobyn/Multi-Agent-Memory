@@ -139,11 +139,14 @@ A native TypeScript OpenClaw plugin lives in `openclaw-plugin/`. It registers a 
 **Install:**
 
 ```bash
+# From npm
+npm install openclaw-dual-agent-memory
+
+# Or install as an OpenClaw plugin
+openclaw plugins install openclaw-dual-agent-memory
+
 # Local development (symlink — changes take effect on restart)
 openclaw plugins install -l ./openclaw-plugin
-
-# Or from npm (once published)
-openclaw plugins install @dual-agent-memory/openclaw-plugin
 ```
 
 **Configure** in your `openclaw.config.json`:
