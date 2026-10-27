@@ -27,8 +27,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "fallback": "llm",  # llm | skip
         "base_url": "https://api.typesafe.ai",
     },
-    "extractor": {"provider": "anthropic", "model": "claude-haiku-5-5", "timeout_ms": 30000},
-    "advisor": {"provider": "anthropic", "model": "claude-opus-5-5", "timeout_ms": 20000},
+    # provider: anthropic | openrouter | auto (Anthropic when ANTHROPIC_API_KEY is set, else OpenRouter)
+    "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},
+    "advisor": {"provider": "auto", "model": "claude-opus-5-5", "timeout_ms": 20000},
     "embeddings": {
         "provider": "openrouter",  # openrouter | local | none
         "model": "openai/text-embedding-3-small",
@@ -47,8 +48,16 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "tools": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
     },
     "pinning": {"max_entries": 25, "max_chars": 10000, "mirror_memory_md": True},
-    "audit": {"behavior_watch_batches": 3, "entailment_check": True},
-    "extraction": {"incremental": True, "dedup_cosine": 0.92},
+    "audit": {
+        "entailment_check": True, "entailment_threshold": 0.5, "entailment_time_budget_s": 10,
+        "behavior_watch": True, "behavior_watch_batches": 3, "behavior_watch_threshold": 0.6,
+    },
+    "extraction": {
+        "incremental": True, "dedup_cosine": 0.92, "min_confidence": 0.5,
+        "max_chars_per_call": 24000, "max_calls": 6,
+        "full_time_budget_s": 40, "incremental_time_budget_s": 20,
+        "background_on_session_end": True, "on_stop": True, "stop_min_chars": 200,
+    },
     "logging": {"shadow_mode": True, "level": "info"},
 }
 

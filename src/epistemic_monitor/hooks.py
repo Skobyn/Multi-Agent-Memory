@@ -1,27 +1,37 @@
-"""Hook handlers (DESIGN.md §4). Phase 0 scope: every event is wired and
-logged; capture at PreCompact/SessionEnd; anchor audit and pinning at
-PostCompact/SessionStart; Tier 0 gate in advisory mode; explicit
-``SUPERSEDE <id>: <reason>`` lines honored under the authority rule.
-Extraction (Phase 1) and gate Tiers 1–3 (Phase 2) are stubs that log.
+"""Hook handlers (DESIGN.md §4), Phase 1.
+
+Capture at PreCompact/SessionEnd; extraction incrementally on each user turn,
+in full at PreCompact, and in the background after SessionEnd and Stop;
+PostCompact anchor + entailment audit writing the pin block; SessionStart
+briefing and post-compaction re-injection; behavior watch on the first tool
+batches after a compaction; Tier 0 gate in advisory mode; SUPERSEDE lines
+under the authority rule. Gate Tiers 1–3 are Phase 2.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from pathlib import Path
 from typing import Any
 
-from . import hooklib
+from . import background, hooklib
+from .audit import behavior_watch, dropped_by_entailment, entailment_audit
 from .config import Config
+from .decision_model import make_decision_model
+from .embeddings import make_embedder
+from .extractor import Extractor
 from .gate import format_citation, run_tier0
+from .llm import make_llm
 from .pinning import render_briefing, render_pinned
 from .store import LedgerStore
-from .transcript import capture_transcript, read_turns
+from .transcript import KIND_ASSISTANT_TEXT, capture_transcript, read_turns, rows_to_turns
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
 
 
+# ---------------------------------------------------------------- helpers
 def _session(payload: dict[str, Any]) -> str:
     return str(payload.get("session_id", "") or "unknown")
 
@@ -29,19 +39,101 @@ def _session(payload: dict[str, Any]) -> str:
 def _apply_supersede_lines(text: str, by: str, store: LedgerStore, session_id: str) -> list[dict[str, Any]]:
     applied: list[dict[str, Any]] = []
     for m in _SUPERSEDE_RE.finditer(text or ""):
-        ok = store.supersede(m.group(1).upper(), None, m.group(2), by=by, session_id=session_id)
+        ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id)
         applied.append({"entry": m.group(1).upper(), "by": by, "ok": ok})
         store.log_intervention({"kind": "supersede", "entry": m.group(1).upper(), "by": by, "ok": ok,
-                                "reason": m.group(2), "session_id": session_id})
+                                "reason": m.group(2).strip(), "session_id": session_id})
     return applied
+
+
+def _dm_for(cfg: Config, store: LedgerStore):
+    try:
+        return make_decision_model(cfg.section("decision_model"), cfg.section("extractor"))
+    except Exception as e:  # noqa: BLE001
+        store.log_intervention({"kind": "component_unavailable", "component": "decision_model", "error": str(e)[:200]})
+        return None
+
+
+def _extractor_for(cfg: Config, store: LedgerStore, time_budget_s: float) -> Extractor | None:
+    try:
+        llm = make_llm(cfg.section("extractor"))
+    except Exception as e:  # noqa: BLE001
+        store.log_intervention({"kind": "component_unavailable", "component": "extractor_llm", "error": str(e)[:200]})
+        return None
+    try:
+        embedder = make_embedder(cfg.section("embeddings"))
+    except Exception:  # noqa: BLE001
+        embedder = None
+    ex = cfg.section("extraction")
+    return Extractor(store, llm, embedder, dedup_cosine=float(ex.get("dedup_cosine", 0.92)),
+                     max_chars_per_call=int(ex.get("max_chars_per_call", 24000)), max_calls=int(ex.get("max_calls", 6)),
+                     time_budget_s=time_budget_s, min_confidence=float(ex.get("min_confidence", 0.5)))
+
+
+def _last_assistant_text(transcript_path: str | None, max_bytes: int = 400_000) -> str:
+    """Last assistant text in the transcript, reading only the tail (the file may be large and lagging)."""
+    if not transcript_path:
+        return ""
+    p = Path(transcript_path)
+    if not p.exists():
+        return ""
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as fh:
+            fh.seek(max(0, size - max_bytes))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    last = ""
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        for t in rows_to_turns(row):
+            if t.kind == KIND_ASSISTANT_TEXT and not t.is_sidechain and t.text.strip():
+                last = t.text
+    return last
+
+
+def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
+    """Maintain a bounded section in Claude Code's auto-memory index so the ledger
+    survives even if hooks are disabled. Never creates MEMORY.md on its own."""
+    path = cfg.memory_md_path
+    if not path.exists():
+        return
+    start, end = "<!-- epistemic-monitor:start -->", "<!-- epistemic-monitor:end -->"
+    block = "\n".join([start, *pinned.splitlines()[:max_lines], end])
+    text = path.read_text(encoding="utf-8")
+    if start in text and end in text:
+        pre, rest = text.split(start, 1)
+        _, post = rest.split(end, 1)
+        text = pre + block + post
+    else:
+        text = text.rstrip() + "\n\n" + block + "\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def write_pinned(cfg: Config, store: LedgerStore, dropped: set[str] | None = None) -> str:
+    active = store.active_entries()
+    pinned = render_pinned(active, dropped, cfg.get("pinning", "max_entries", 25), cfg.get("pinning", "max_chars", 10000))
+    cfg.pinned_path.write_text(pinned, encoding="utf-8")
+    if cfg.get("pinning", "mirror_memory_md", True):
+        _mirror_memory_md(cfg, pinned)
+    return pinned
 
 
 # ---------------------------------------------------------------- session lifecycle
 def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     source = str(payload.get("source", "startup"))
     active = store.active_entries()
+    pending = [p for p in pending_dir(cfg).glob("*.json")] if source != "compact" else []
+    pid = background.spawn(cfg, ["extract-pending"]) if pending else None
     store.log_intervention({"kind": "session_start", "source": source, "active_entries": len(active),
-                            "session_id": _session(payload)})
+                            "pending_captures": len(pending), "background_pid": pid, "session_id": _session(payload)})
     if source == "compact" and cfg.pinned_path.exists():
         return hooklib.additional_context("session_start", cfg.pinned_path.read_text(encoding="utf-8"))
     if not active:
@@ -51,13 +143,33 @@ def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
     return hooklib.additional_context("session_start", text)
 
 
+def pending_dir(cfg: Config) -> Path:
+    d = cfg.data_dir / "pending"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def mark_pending(cfg: Config, capture: Path, session_id: str) -> Path:
+    """Record a capture whose extraction has not completed. The background worker
+    removes the marker when done; the next SessionStart retries anything left."""
+    marker = pending_dir(cfg) / (capture.name + ".json")
+    marker.write_text(json.dumps({"capture": str(capture), "session_id": session_id, "created": time.time()}), encoding="utf-8")
+    return marker
+
+
 def session_end(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
-    # Capture only (DESIGN §11 decision 3): the 1.5 s default budget leaves no room for model calls.
+    # Capture only (DESIGN §11 decision 3); extraction of the tail runs detached, and is
+    # retried at the next SessionStart if the detached worker never finishes (a `-p` session
+    # or a cloud sandbox can take its network down with it).
+    sid = _session(payload)
     path = payload.get("transcript_path")
-    label = f"{_session(payload)}-end-{int(time.time())}"
-    out = capture_transcript(path, cfg.transcripts_dir, label) if path else None
+    out = capture_transcript(path, cfg.transcripts_dir, f"{sid}-end-{int(time.time())}") if path else None
+    pid = None
+    if out is not None and out.exists() and cfg.get("extraction", "background_on_session_end", True):
+        mark_pending(cfg, out, sid)
+        pid = background.spawn(cfg, ["extract-pending"])
     store.log_intervention({"kind": "capture", "event": "session_end", "reason": payload.get("reason"),
-                            "file": str(out) if out else None, "session_id": _session(payload)})
+                            "file": str(out) if out else None, "background_pid": pid, "session_id": sid})
     return None
 
 
@@ -72,60 +184,53 @@ def pre_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dic
         turns, stats = read_turns(path, after_uuid=store.get_watermark(sid))
         record.update(file=str(out), lines=stats.lines, parsed=stats.parsed, errors=stats.errors,
                       new_turns=len(turns), compactions_seen=stats.compactions, versions=sorted(stats.versions))
+        ex = _extractor_for(cfg, store, float(cfg.get("extraction", "full_time_budget_s", 40)))
+        if ex is not None and turns:
+            record["extraction"] = ex.run(turns, sid, mode="full").to_dict()
         if stats.last_uuid:
             store.set_watermark(sid, stats.last_uuid)
-        record["extraction"] = "deferred (Phase 1)"
     else:
         record["file"] = None
         record["note"] = "transcript_path missing"
-    store.set_state(sid, "post_compaction_batches", cfg.get("audit", "behavior_watch_batches", 3))
+    store.set_state(sid, "post_compaction_batches", int(cfg.get("audit", "behavior_watch_batches", 3)))
     store.log_intervention(record)
     return None  # PreCompact cannot inject context; never block compaction.
 
 
 def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
-    """Anchor audit (DESIGN §7 step 1) and pin block (step 3). Entailment audit is Phase 1."""
+    """Anchor audit, entailment audit, and pin block (DESIGN §7 steps 1–3)."""
     sid = _session(payload)
     summary = str(payload.get("compact_summary") or "")
     active = store.active_entries()
-    dropped: set[str] = set()
-    unaudited = 0
+    dropped_anchor: set[str] = set()
+    no_anchor = 0
     for e in active:
         if not e.anchors:
-            unaudited += 1
+            no_anchor += 1
             continue
         if not any(a and a in summary for a in e.anchors):
-            dropped.add(e.id)
-    pinned = render_pinned(active, dropped, cfg.get("pinning", "max_entries", 25), cfg.get("pinning", "max_chars", 10000))
-    cfg.pinned_path.write_text(pinned, encoding="utf-8")
-    if cfg.get("pinning", "mirror_memory_md", True):
-        _mirror_memory_md(cfg, pinned)
-    audited = len(active) - unaudited
-    store.log_intervention({"kind": "compaction_audit", "session_id": sid, "trigger": payload.get("trigger"),
-                            "active": len(active), "audited": audited, "dropped": sorted(dropped),
-                            "unaudited_no_anchors": unaudited,
-                            "retention": (audited - len(dropped)) / audited if audited else None,
-                            "summary_chars": len(summary), "entailment": "deferred (Phase 1)"})
+            dropped_anchor.add(e.id)
+    scores: dict[str, float | None] = {}
+    dropped_ent: set[str] = set()
+    if active and summary and cfg.get("audit", "entailment_check", True):
+        dm = _dm_for(cfg, store)
+        if dm is not None:
+            scores = entailment_audit(active, summary, dm, float(cfg.get("audit", "entailment_threshold", 0.5)),
+                                      time_budget_s=float(cfg.get("audit", "entailment_time_budget_s", 10)))
+            dropped_ent = dropped_by_entailment(scores, float(cfg.get("audit", "entailment_threshold", 0.5)))
+    dropped = dropped_anchor | dropped_ent
+    audited = {e.id for e in active if e.anchors or scores.get(e.id) is not None}
+    pinned = write_pinned(cfg, store, dropped)
+    store.log_intervention({
+        "kind": "compaction_audit", "session_id": sid, "trigger": payload.get("trigger"),
+        "active": len(active), "audited": len(audited), "dropped": sorted(dropped),
+        "dropped_by_anchor": sorted(dropped_anchor), "dropped_by_entailment": sorted(dropped_ent),
+        "entailment_scores": {k: (round(v, 3) if v is not None else None) for k, v in scores.items()},
+        "unaudited": len(active) - len(audited),
+        "retention": (len(audited) - len(dropped & audited)) / len(audited) if audited else None,
+        "summary_chars": len(summary), "pinned_chars": len(pinned),
+    })
     return None  # PostCompact cannot inject; SessionStart[compact] emits pinned.md.
-
-
-def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
-    """Maintain a bounded section in Claude Code's auto-memory index so the ledger
-    survives even if hooks are disabled. Never creates MEMORY.md on its own."""
-    path = cfg.memory_md_path
-    if not path.exists():
-        return
-    start, end = "<!-- epistemic-monitor:start -->", "<!-- epistemic-monitor:end -->"
-    section_lines = pinned.splitlines()[:max_lines]
-    block = "\n".join([start, *section_lines, end])
-    text = path.read_text(encoding="utf-8")
-    if start in text and end in text:
-        pre, rest = text.split(start, 1)
-        _, post = rest.split(end, 1)
-        text = pre + block + post
-    else:
-        text = text.rstrip() + "\n\n" + block + "\n"
-    path.write_text(text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------- per turn
@@ -133,8 +238,13 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
     applied = _apply_supersede_lines(prompt, "user", store, sid)
-    store.log_intervention({"kind": "prompt", "session_id": sid, "chars": len(prompt),
-                            "supersedes": applied, "extraction": "deferred (Phase 1)"})
+    record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
+    if cfg.get("extraction", "incremental", True) and len(prompt.strip()) >= 12:
+        ex = _extractor_for(cfg, store, float(cfg.get("extraction", "incremental_time_budget_s", 20)))
+        if ex is not None:
+            prev = _last_assistant_text(payload.get("transcript_path"))
+            record["extraction"] = ex.run_incremental(prompt, prev, sid).to_dict()
+    store.log_intervention(record)
     return None
 
 
@@ -175,21 +285,46 @@ def post_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
 def post_tool_batch(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     remaining = int(store.get_state(sid, "post_compaction_batches", 0) or 0)
+    calls = payload.get("tool_calls") or []
+    record: dict[str, Any] = {"kind": "batch", "session_id": sid, "tool_calls": len(calls),
+                              "behavior_watch_remaining": max(0, remaining - 1) if remaining else 0}
+    output: dict[str, Any] | None = None
     if remaining > 0:
         store.set_state(sid, "post_compaction_batches", remaining - 1)
-    store.log_intervention({"kind": "batch", "session_id": sid, "tool_calls": len(payload.get("tool_calls") or []),
-                            "behavior_watch_remaining": max(0, remaining - 1) if remaining else 0,
-                            "behavior_watch": "deferred (Phase 1)"})
-    return None
+        active = store.active_entries()
+        if calls and active and cfg.get("audit", "behavior_watch", True):
+            dm = _dm_for(cfg, store)
+            if dm is not None:
+                try:
+                    p, ms = behavior_watch(active, calls, dm)
+                    record.update(behavior_watch_p=round(p, 3), behavior_watch_ms=ms)
+                    if p >= float(cfg.get("audit", "behavior_watch_threshold", 0.6)):
+                        pinned = cfg.pinned_path.read_text(encoding="utf-8") if cfg.pinned_path.exists() else write_pinned(cfg, store)
+                        output = hooklib.additional_context(
+                            "post_tool_batch",
+                            "Epistemic monitor: the last tool batch appears to conflict with decisions recorded before "
+                            "the context was compacted. Re-read them before continuing:\n\n" + pinned)
+                        record["reinjected"] = True
+                except Exception as e:  # noqa: BLE001
+                    record["behavior_watch_error"] = str(e)[:200]
+    store.log_intervention(record)
+    return output
 
 
 def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     last = str(payload.get("last_assistant_message") or "")
     applied = _apply_supersede_lines(last, "agent", store, sid)
-    store.log_intervention({"kind": "stop", "session_id": sid, "stop_hook_active": bool(payload.get("stop_hook_active")),
-                            "chars": len(last), "supersedes": applied, "turn_check": "deferred (Phase 2)"})
-    return None  # Phase 0 never blocks a Stop.
+    record: dict[str, Any] = {"kind": "stop", "session_id": sid, "stop_hook_active": bool(payload.get("stop_hook_active")),
+                              "chars": len(last), "supersedes": applied, "turn_check": "deferred (Phase 2)"}
+    if cfg.get("extraction", "on_stop", True) and len(last) >= int(cfg.get("extraction", "stop_min_chars", 200)):
+        tmp = cfg.data_dir / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        f = tmp / f"{sid}-stop-{int(time.time() * 1000)}.txt"
+        f.write_text(last, encoding="utf-8")
+        record["background_pid"] = background.spawn(cfg, ["extract-text", str(f), "--session", sid, "--role", "assistant"])
+    store.log_intervention(record)
+    return None  # Phase 1 never blocks a Stop.
 
 
 # ---------------------------------------------------------------- subagents
