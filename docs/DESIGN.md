@@ -243,8 +243,11 @@ Tiers run in order and short-circuit:
   is not asked whether an entry is relevant (its answer was uninformative, §8.2). No candidates →
   `allow`. Caveat from REFLEX (2609.26532 Table S10): embedding similarity does not track
   procedural validity, so scope globs and anchors are the primary filter and embeddings only add.
-- **Tier 2, decision model (≤1 s, one call per candidate, in parallel).** `conflict` noul and
-  `severity` score as in §8.2, with the entry and the concrete change as structured `state`.
+- **Tier 2, decision model (≤1 s, one request per candidate, in parallel).** `conflict` noul and
+  `severity` score as in §8.2 ride in one TypeSafe request per candidate (the API evaluates several
+  questions against one `state`), with the entry and the concrete change as structured `state`.
+  Tier 1's embedding lookup is a network round trip and runs only when scope and keyword retrieval
+  found fewer than two candidates; the unflagged path measured p95 560 ms with these two choices.
   Flag when `p_conflict ≥ τ_type`. Thresholds are per entry type and per action reversibility:
   REFLEX found Jev-class models accurate on "which option" questions but weak on "is this
   authorized / should I act at all" (52% on should-any-function-be-called; wrong calls carried
@@ -426,7 +429,7 @@ task success (does the tempting task still complete, PRE/POST where applicable);
 |---|---|---|
 | 0 (1 day) | Plugin skeleton, `hooks.json`, transcript reader with fixtures, storage layout, real embedder, delete v0.1 monitor/regex/benchmark | Reader parses fixtures from two Claude Code versions; hooks fire in a smoke session and log |
 | 1 (week 1) | Extractor (incremental + full pass), ledger index with anchors, `PreCompact`/`SessionEnd` capture, `PostCompact` anchor + entailment audit, behavior watch, `SessionStart` pinning + briefing, `MEMORY.md` mirror, `/ledger` command | Retention ≥95% and extraction recall ≥90% on a 3-compaction scripted session (`scripts/phase1_check.py`); briefing ≤10 KB; zero main-agent tool calls required. **Met 2026-10-27:** recall 100%, retained 100% at each compaction; summary alone kept 0/12 at the third. |
-| 2 (weeks 2–3) | Gate Tiers 0–3 incl. structural signals and first-mutating-write advisor, resample flow, provenance force, harm budget + shadow mode, intervention log, `Stop` turn check, behavior watch, decision-model adapter + calibration | On the bench: violation rate ≤5% after 4 compactions with false-deny ≤2%; unflagged p95 ≤800 ms |
+| 2 (weeks 2–3) | Gate Tiers 0–3 incl. structural signals and first-mutating-write advisor, resample flow, provenance force, harm budget + shadow mode, intervention log, `Stop` turn check, behavior watch, decision-model adapter + calibration | On the bench: violation rate ≤5% with false-deny ≤2%; unflagged p95 ≤800 ms. **Met 2026-10-27** on the held-out half of `scripts/phase2_check.py` (36 labeled tool calls, 12 user-backed entries): violation 0%, false-deny 0%, unflagged p95 560 ms, advisor on Haiku (Opus/Sonnet refused by OpenRouter's credit pre-check). The post-compaction arm belongs to Phase 3's bench. |
 | 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success |
 | 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions |
 
@@ -462,6 +465,12 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    session. Mitigation shipped in Phase 1: every capture gets a pending marker that the next
    `SessionStart` retries, and markers clear only on error-free extraction. Interactive sessions are
    unaffected. Open: whether the final prompt of a `-p` run should also be captured synchronously.
+8. **Advisor model availability.** OpenRouter pre-checks each request against prepaid credits; on
+   2026-10-27 the account had a $250 weekly key limit but zero prepaid balance, so Opus and Sonnet
+   advisor calls returned HTTP 402 while Haiku passed. The gate degrades to its model-only path when
+   the advisor errors, which is where every false deny in the failed bench runs came from. Until
+   credits are added (or `ANTHROPIC_API_KEY` is set), run the advisor on Haiku
+   (`EPISTEMIC_ADVISOR_MODEL=claude-haiku-5-5`); the bench passed with it.
 
 ## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
 

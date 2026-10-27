@@ -122,6 +122,19 @@ class TypeSafeDecisionModel:
         return ScoreResult(float(a["score"]), {str(k): float(v) for k, v in a.get("probabilities", {}).items()},
                            float(a.get("confidence", 0.0)), ms, str(data.get("model", self.model)))
 
+    def noul_and_score(self, noul_instructions: str, criteria: dict[str, str], score_instructions: str,
+                       levels: list[str], state: Any) -> tuple[NoulResult, ScoreResult]:
+        """Both gate questions in one request (TypeSafe evaluates them in parallel against one state)."""
+        data, ms = self.ask(state, {
+            "n": {"type": "noul", "instructions": noul_instructions,
+                  "criteria": {"true": criteria.get("true", ""), "false": criteria.get("false", "")}},
+            "s": {"type": "score", "instructions": score_instructions, "criteria": levels}})
+        n, sc = data["answers"]["n"], data["answers"]["s"]
+        model = str(data.get("model", self.model))
+        return (NoulResult(float(n["noul"]), ms, model, int(data.get("usage", {}).get("input_tokens", 0))),
+                ScoreResult(float(sc["score"]), {str(k): float(v) for k, v in sc.get("probabilities", {}).items()},
+                            float(sc.get("confidence", 0.0)), ms, model))
+
 
 class LLMDecisionModel:
     """Fallback: an OpenAI-compatible chat endpoint (OpenRouter) or the Anthropic

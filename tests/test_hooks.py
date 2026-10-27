@@ -135,6 +135,25 @@ def test_supersede_lines_respect_authority(cfg, store, monkeypatch):
         s.close()
 
 
+def test_agent_supersede_inside_code_fence_is_ignored(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.1))
+    make_entry(store, source="agent", confirmed=False, statement="Use pytest-xdist.")  # D-0001 agent-owned
+    store.close()
+    msg = "To change this, reply with:\n```\nSUPERSEDE D-0001: no longer needed\n```\nOtherwise nothing changes. " * 2
+    _run("stop", {"last_assistant_message": msg, "stop_hook_active": False}, cfg)
+    s = LedgerStore(cfg)
+    try:
+        assert s.get_entry("D-0001").status == "active"
+    finally:
+        s.close()
+    _run("stop", {"last_assistant_message": "Done. SUPERSEDE D-0001: replaced by plain pytest " * 3, "stop_hook_active": False}, cfg)
+    s = LedgerStore(cfg)
+    try:
+        assert s.get_entry("D-0001").status == "superseded"
+    finally:
+        s.close()
+
+
 def test_stop_and_session_end_spawn_background_extraction(cfg, monkeypatch):
     spawned = _offline(monkeypatch)
     _run("stop", {"last_assistant_message": "short"}, cfg)
@@ -194,11 +213,13 @@ def test_behavior_watch_reinjects_after_compaction(cfg, store, monkeypatch):
 
 
 def test_gate_advisory_then_enforced(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
     make_entry(store, scope={"paths": ["src/db/*"]},
                falsifiers=[{"kind": "diff_regex_forbidden", "pattern": r"\bpymongo\b"}])
     store.close()
     payload = {"tool_name": "Edit", "tool_use_id": "t1",
                "tool_input": {"file_path": "src/db/client.py", "old_string": "a", "new_string": "import pymongo"}}
+    monkeypatch.setenv("EPISTEMIC_GATE_ENFORCE", "false")
     out = _run("pre_tool_use", payload, cfg)
     assert "additionalContext" in out["hookSpecificOutput"] and "D-0001" in out["hookSpecificOutput"]["additionalContext"]
     rec = _logged(cfg, "gate")[-1]
@@ -207,6 +228,40 @@ def test_gate_advisory_then_enforced(cfg, store, monkeypatch):
     out = _run("pre_tool_use", payload, cfg)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert _run("pre_tool_use", {"tool_name": "Read", "tool_input": {"file_path": "x"}}, cfg) is None
+    hist = LedgerStore(cfg)
+    try:
+        h = hist.get_state("s1", "tool_history")
+        assert len(h) == 2 and h[-1]["decision"] == "deny" and h[-1]["mutating"] is True
+    finally:
+        hist.close()
+
+
+def test_gate_model_path_through_hook(cfg, store, monkeypatch):
+    """No falsifier: Tier 1 retrieves by keyword, Tier 2 flags, Tier 3 advisor confirms, user-backed -> deny."""
+    llm = FakeLLM([{"verdict": "conflict", "entry_ids": ["D-0001"], "next_step": "keep the Postgres engine", "reason": "switches db"}])
+    _offline(monkeypatch, llm=llm, dm=FakeDM(default=0.95))
+    monkeypatch.setattr(hooks, "make_llm", lambda section: llm)
+    make_entry(store)  # PostgreSQL, user, no scope, no falsifiers
+    store.close()
+    out = _run("pre_tool_use", {"tool_name": "Edit", "tool_use_id": "t9",
+                                "tool_input": {"file_path": "src/db/client.py", "old_string": "a",
+                                               "new_string": "from pymongo import MongoClient  # replace the database client"}}, cfg)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "keep the Postgres engine" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    rec = _logged(cfg, "gate")[-1]
+    assert rec["tier_reached"] == 3 and rec["conflicts"] == ["D-0001"] and rec["advisor"]["verdict"] == "conflict"
+
+
+def test_stop_turn_check_blocks_once(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.95))
+    make_entry(store)
+    store.close()
+    msg = "I have switched the whole persistence layer to MongoDB because it is simpler. " * 3
+    out = _run("stop", {"last_assistant_message": msg, "stop_hook_active": False}, cfg)
+    assert out["decision"] == "block" and "D-0001" in out["reason"]
+    assert _logged(cfg, "stop")[-1]["blocked"] is True
+    # second pass of the same turn (stop_hook_active) never blocks again
+    assert _run("stop", {"last_assistant_message": msg, "stop_hook_active": True}, cfg) is None
 
 
 def test_handler_errors_never_fail_the_session(cfg):

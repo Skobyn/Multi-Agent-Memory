@@ -16,6 +16,13 @@ ENTAILMENT_CRITERIA = {"true": "The summary states the decision, constraint, or 
                        "false": "The summary omits it, contradicts it, or mentions the topic without the actual "
                                 "decision, constraint, or requirement."}
 
+STOP_INSTRUCTIONS = ("Does the assistant message state, decide, or rely on something that contradicts one of the "
+                     "listed entries?")
+STOP_CRITERIA = {"true": "The message announces a choice, plan, or claim that goes against a listed decision, "
+                         "constraint, premise, commitment, or required process step.",
+                 "false": "The message is consistent with every listed entry, unrelated to them, or explicitly "
+                          "supersedes an entry with a SUPERSEDE line."}
+
 WATCH_INSTRUCTIONS = "Do these tool calls, taken together, conflict with any of the listed decisions or constraints?"
 WATCH_CRITERIA = {"true": "At least one tool call does something a listed entry rules out, skips a step a listed entry "
                           "requires, or works against a listed decision's intent.",

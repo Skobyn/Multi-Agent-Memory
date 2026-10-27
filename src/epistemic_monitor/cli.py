@@ -85,6 +85,14 @@ def ledger(argv: list[str]) -> int:
     sub.add_parser("pin")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
+    s_rev = sub.add_parser("review", help="list recent gate decisions that involved the decision model, for labeling")
+    s_rev.add_argument("n", nargs="?", type=int, default=20)
+    s_lab = sub.add_parser("label", help="record whether a flagged tool call really conflicted")
+    s_lab.add_argument("tool_use_id"); s_lab.add_argument("label", choices=("conflict", "ok"))
+    s_good = sub.add_parser("mark-good", help="mark a session as known-good for the false-deny quantile")
+    s_good.add_argument("session_id")
+    s_cal = sub.add_parser("calibrate"); s_cal.add_argument("--max-false-deny", type=float, default=0.02)
+    s_cal.add_argument("--alpha", type=float, default=0.05); s_cal.add_argument("--min-labels", type=int, default=12)
     args = p.parse_args(argv or ["list"])
     cfg = load_config()
     store = LedgerStore(cfg)
@@ -121,6 +129,40 @@ def ledger(argv: list[str]) -> int:
                 print(json.dumps(r, ensure_ascii=False)[:400])
         elif args.cmd == "status":
             print(json.dumps(_status_dict(cfg, store), indent=2))
+        elif args.cmd == "review":
+            gates = [r for r in store.recent_interventions(2000) if r.get("kind") == "gate" and r.get("scores")][-args.n:]
+            if not gates:
+                print("(no gate decisions with model scores yet)")
+            for r in gates:
+                print(f"{r.get('tool_use_id')}  {r.get('decision'):8} {r.get('tool'):10} {r.get('path') or ''}  "
+                      f"max_p={r.get('max_p_conflict')}  flagged={r.get('flagged')}  conflicts={r.get('conflicts')}")
+                for eid, sc in (r.get("scores") or {}).items():
+                    print(f"      {eid}: p={sc.get('p_conflict')} sev={sc.get('severity')} tau={sc.get('tau')}")
+            print("\nlabel with: em ledger label <tool_use_id> conflict|ok")
+        elif args.cmd == "label":
+            from .calibration import add_label
+            rec = next((r for r in store.recent_interventions(5000) if r.get("kind") == "gate" and r.get("tool_use_id") == args.tool_use_id), None)
+            if rec is None:
+                print(f"no gate record with tool_use_id {args.tool_use_id}")
+            else:
+                scores = {eid: sc.get("p_conflict") for eid, sc in (rec.get("scores") or {}).items() if isinstance(sc.get("p_conflict"), (int, float))}
+                types = {}
+                for eid in scores:
+                    e = store.get_entry(eid)
+                    if e is not None:
+                        types[eid] = e.type
+                add_label(cfg, {"tool_use_id": args.tool_use_id, "label": args.label, "scores": scores, "types": types,
+                                "session_id": rec.get("session_id"), "decision": rec.get("decision")})
+                print(f"labeled {args.tool_use_id} as {args.label} ({len(scores)} scored entries)")
+        elif args.cmd == "mark-good":
+            from .calibration import mark_good_session
+            mark_good_session(cfg, args.session_id)
+            print(f"session {args.session_id} marked known-good")
+        elif args.cmd == "calibrate":
+            from .calibration import calibrate
+            gates = [r for r in store.recent_interventions(20000) if r.get("kind") == "gate"]
+            cal = calibrate(cfg, gates, args.max_false_deny, args.alpha, args.min_labels)
+            print(json.dumps(cal.to_dict(), indent=2))
     finally:
         store.close()
     return 0

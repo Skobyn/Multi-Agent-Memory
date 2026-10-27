@@ -50,6 +50,9 @@ For each entry give:
   {"kind":"path_glob_forbidden","glob":<glob that must not be written>}
   {"kind":"path_glob_required_with","glob":<glob of new files>,"requires":<companion path with {stem}>}
   {"kind":"command_regex_forbidden","pattern":<regex a shell command must not match>}
+  {"kind":"command_requires_prior","pattern":<regex of a command that needs a prior step, e.g. "git (commit|push)">,
+   "prior_pattern":<regex of the required earlier command, e.g. "pytest|npm test">,"window":20}
+  (use command_requires_prior for process entries like "run the tests before committing")
 - "depends_on": ids of existing ledger entries this one presupposes, or [].
 - "confidence": 0..1 that this is a real, durable item.
 
@@ -140,6 +143,13 @@ def validate_falsifiers(raw: Any) -> list[dict[str, Any]]:
                 g, r = str(f.get("glob", "")), str(f.get("requires", ""))
                 if g and r and "{stem}" in r:
                     out.append({"kind": kind, "glob": g, "requires": r})
+            elif kind == "command_requires_prior":
+                pat, prior = str(f.get("pattern", "")), str(f.get("prior_pattern", ""))
+                if pat and prior and len(pat) <= 300 and len(prior) <= 300:
+                    re.compile(pat)
+                    re.compile(prior)
+                    out.append({"kind": kind, "pattern": pat, "prior_pattern": prior,
+                                "window": int(f.get("window", 20) or 20)})
             elif kind == "shell_check":
                 cmd = str(f.get("command", ""))
                 if cmd:

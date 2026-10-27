@@ -17,6 +17,7 @@ FALSIFIER_KINDS = (
     "path_glob_forbidden",
     "path_glob_required_with",
     "command_regex_forbidden",
+    "command_requires_prior",
     "shell_check",
 )
 

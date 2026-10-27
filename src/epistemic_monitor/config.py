@@ -37,7 +37,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "timeout_ms": 10000,
     },
     "gate": {
-        "enforce": False,  # Phase 0/1: advisory only. Phase 2 flips this on.
+        "enforce": True,                      # Phase 2: deny user-backed conflicts (budgeted)
+        "enforce_uncalibrated_min_p": 0.9,    # without calibration, model-only conflicts deny only at p >= this
         "tau_default": 0.75,
         "tau_by_type": {"process": 0.6, "commitment": 0.6},
         "deny_budget": 5,
@@ -46,6 +47,19 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "max_consecutive_denies": 5,
         "authorization_shaped_to_advisor": True,
         "tools": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
+        "candidates_max": 6,
+        "max_diff_chars": 120000,             # ≈32K tokens, the decision model's per-question default
+        "tier2_time_budget_s": 1.5,
+        "tier3_time_budget_s": 20,
+        "resample_band": 0.1,
+        "resample_n": 2,
+        "cycle_window": 10,
+        "stagnation_run": 7,
+        "first_write_advisor": True,
+        "stop_check": True,
+        "stop_threshold": 0.8,
+        "advisor_slice_turns": 12,
+        "history_max": 60,
     },
     "pinning": {"max_entries": 25, "max_chars": 10000, "mirror_memory_md": True},
     "audit": {
