@@ -4,6 +4,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export EPISTEMIC_DATA_DIR="${EPISTEMIC_DATA_DIR:-$(mktemp -d)/epistemic}"
+# Offline by default: no LLM, no decision model, no embeddings, no background workers. Set EM_SMOKE_LIVE=1 to use them.
+if [ "${EM_SMOKE_LIVE:-0}" != "1" ]; then
+  export EPISTEMIC_EXTRACTION_INCREMENTAL=false EPISTEMIC_EXTRACTION_ON_STOP=false EPISTEMIC_EXTRACTION_BACKGROUND_ON_SESSION_END=false
+  export EPISTEMIC_AUDIT_ENTAILMENT_CHECK=false EPISTEMIC_AUDIT_BEHAVIOR_WATCH=false EPISTEMIC_EMBEDDINGS_PROVIDER=none
+fi
 SID="smoke-$(date +%s)"
 FIX="$ROOT/tests/fixtures/transcript_synthetic_older_format.jsonl"
 hook() { local ev="$1"; shift; printf '%s' "$1" | python3 -I "$ROOT/bin/em-hook" hook "$ev"; echo; }

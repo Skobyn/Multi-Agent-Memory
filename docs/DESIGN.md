@@ -169,8 +169,11 @@ Two cadences, same extractor:
   decides inclusion: *would this still apply if the user asked an unrelated question several
   turns later?* ConPACT's training-free 9B extractor with this recipe reached 90–95% retention
   and 93–96% compliance, within ~2 pp of the no-compaction upper bound.
-- **Full pass at `PreCompact` and `SessionEnd`**: turns since the watermark, including assistant
-  turns, to catch decisions the agent made on its own (`provenance.source=agent`).
+- **Full pass at `PreCompact`** over turns since the watermark, including assistant turns, to catch
+  decisions the agent made on its own (`provenance.source=agent`). The same pass runs **detached after
+  `SessionEnd`** (capture only inside the 1.5 s hook; a background worker extracts from the capture),
+  and a detached incremental pass runs after each `Stop` on the final assistant message when it is
+  long enough to contain a decision.
 
 Model: `extractor.model` from the configuration (§12), default `claude-haiku-5-5` on the
 Anthropic API, structured output conforming to §3 minus `id`/`status`/`embedding_ref`. Prompt contract: extract only explicit decisions,
@@ -422,7 +425,7 @@ task success (does the tempting task still complete, PRE/POST where applicable);
 | Phase | Build | Exit criterion |
 |---|---|---|
 | 0 (1 day) | Plugin skeleton, `hooks.json`, transcript reader with fixtures, storage layout, real embedder, delete v0.1 monitor/regex/benchmark | Reader parses fixtures from two Claude Code versions; hooks fire in a smoke session and log |
-| 1 (week 1) | Extractor (incremental + full pass), ledger index with anchors, `PreCompact`/`SessionEnd` capture, `PostCompact` anchor + entailment audit, `SessionStart` pinning + briefing, `MEMORY.md` mirror, `/ledger` command | Retention ≥95% on a 3-compaction scripted session; briefing ≤10 KB; zero main-agent tool calls required |
+| 1 (week 1) | Extractor (incremental + full pass), ledger index with anchors, `PreCompact`/`SessionEnd` capture, `PostCompact` anchor + entailment audit, behavior watch, `SessionStart` pinning + briefing, `MEMORY.md` mirror, `/ledger` command | Retention ≥95% and extraction recall ≥90% on a 3-compaction scripted session (`scripts/phase1_check.py`); briefing ≤10 KB; zero main-agent tool calls required. **Met 2026-10-27:** recall 100%, retained 100% at each compaction; summary alone kept 0/12 at the third. |
 | 2 (weeks 2–3) | Gate Tiers 0–3 incl. structural signals and first-mutating-write advisor, resample flow, provenance force, harm budget + shadow mode, intervention log, `Stop` turn check, behavior watch, decision-model adapter + calibration | On the bench: violation rate ≤5% after 4 compactions with false-deny ≤2%; unflagged p95 ≤800 ms |
 | 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success |
 | 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions |
@@ -453,6 +456,12 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    query at supersession time.
 6. Research track (not v2): JEPA-style latent surprise over the decision manifold; confidence
    carried with entries across handoffs.
+7. **Async and detached work can be cut short by session exit.** Observed 2026-10-27 in a `claude -p`
+   run: the asynchronous `UserPromptSubmit` extractor was killed after writing one of three entries, and
+   the detached `SessionEnd` worker lost network because the cloud sandbox tears down its proxy with the
+   session. Mitigation shipped in Phase 1: every capture gets a pending marker that the next
+   `SessionStart` retries, and markers clear only on error-free extraction. Interactive sessions are
+   unaffected. Open: whether the final prompt of a `-p` run should also be captured synchronously.
 
 ## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
 
@@ -553,8 +562,8 @@ it never carries secrets. Secrets come only from the environment: `TYPESAFE_API_
     "max_question_tokens": 32000,      // stay under the per-question default; no long-context header
     "fallback": "llm"                  // llm | skip  (what Tier 2 does when the provider is unavailable)
   },
-  "extractor": {"provider": "anthropic", "model": "claude-haiku-5-5", "timeout_ms": 30000},
-  "advisor":   {"provider": "anthropic", "model": "claude-opus-5-5",  "timeout_ms": 20000},
+  "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},   // auto = anthropic if ANTHROPIC_API_KEY else openrouter
+  "advisor":   {"provider": "auto", "model": "claude-opus-5-5",  "timeout_ms": 20000},
   "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},   // openrouter | local | none
   "gate": {
     "tau_default": 0.75, "tau_by_type": {"process": 0.6, "commitment": 0.6},
@@ -574,7 +583,7 @@ Providers:
 | Role | `provider` values | Notes |
 |---|---|---|
 | `decision_model` | `typesafe` (initial), `llm` | Both implement the `DecisionModel` interface in §8.2 and log the same fields, so calibration (§8.1) is per provider and switching providers invalidates the stored τ until refit. |
-| `extractor`, `advisor` | `anthropic`, `openrouter` | Same message format; OpenRouter is used when only that key is present. The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
+| `extractor`, `advisor` | `anthropic`, `openrouter`, `auto` | `auto` picks Anthropic when `ANTHROPIC_API_KEY` is set, else OpenRouter; Anthropic-style model ids are mapped to OpenRouter's (`claude-haiku-5-5` → `anthropic/claude-haiku-5.5`). The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
 | `embeddings` | `openrouter`, `local`, `none` | `local` = sentence-transformers (`BAAI/bge-small-en-v1.5`) for offline use; `none` disables vector retrieval (scope and keyword only). Anthropic has no first-party embeddings endpoint, so an `anthropic` value is not offered. Switching models requires a re-embed of the ledger, which the plugin runs lazily. |
 
 Calibration state (`calibration.json`) is keyed by `(role, provider, model)` so a provider swap

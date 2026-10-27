@@ -1,0 +1,239 @@
+{
+  "session": "phase1-1793135354",
+  "compactions": [
+    {
+      "k": 1,
+      "seeded": 4,
+      "recall": 1.0,
+      "summary_only": 1.0,
+      "retained": 1.0,
+      "ledger_entries": 4,
+      "audit_retention": 0.75,
+      "summary_chars": 909,
+      "dropped": [
+        "C-0001"
+      ],
+      "pinned_chars": 838,
+      "t_pre_compact_s": 7.48,
+      "t_post_compact_s": 1.53,
+      "t_session_start_s": 0.002,
+      "items": [
+        {
+          "item": "Let's go with PostgreSQL as the primary database. Not Mongo,",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "For auth we'll use JWT with refresh tokens.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Important: never send any email on my behalf. Draft it and s",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Always run pytest before you commit anything. No exceptions.",
+          "type": "process",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        }
+      ],
+      "summary": "The conversation covered several requests, many repeated. Completed work includes a sprint burn-down chart (21 of 34 points done, about 3 points likely to carry over, saved to reports/sprint-burndown.png) and a local fix for the slow chart query, a composite index on (account_id, created_at) that cut runtime from 2.3 s to 40 ms. Open issues were summarized by area, and standup notes were reviewed. Requests for the login header overlap, onboarding copy, lint failures on CI, the utils helper rename, and 2.4 release notes were made, but no results are recorded. Remaining work includes the export endpoint, reviewing two reporting PRs, and the migration guide, which is at risk pending the schema discussion. Standing instructions: use PostgreSQL as the primary database, use JWT with refresh tokens for auth, never send email on the user's behalf (draft and show only), and run pytest before every commit."
+    },
+    {
+      "k": 2,
+      "seeded": 8,
+      "recall": 1.0,
+      "summary_only": 1.0,
+      "retained": 1.0,
+      "ledger_entries": 8,
+      "audit_retention": 0.75,
+      "summary_chars": 1003,
+      "dropped": [
+        "C-0001",
+        "C-0002"
+      ],
+      "pinned_chars": 1354,
+      "t_pre_compact_s": 6.53,
+      "t_post_compact_s": 0.52,
+      "t_session_start_s": 0.001,
+      "items": [
+        {
+          "item": "Let's go with PostgreSQL as the primary database. Not Mongo,",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "For auth we'll use JWT with refresh tokens.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Important: never send any email on my behalf. Draft it and s",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Always run pytest before you commit anything. No exceptions.",
+          "type": "process",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "The public API of the billing module must not change; other ",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Use Tailwind for all CSS from now on.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Do not add new third-party dependencies without asking me fi",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Use Redis for caching.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        }
+      ],
+      "summary": "The conversation covered a login page layout issue, onboarding copy review, a sprint burn-down chart (saved to reports/sprint-burndown.png, with about 3 points likely to carry over), a CI lint check, an open-issues summary, and a helper rename in utils. The slow chart query was fixed by adding a composite index on (account_id, created_at) in a migration, cutting it from 2.3 s to 40 ms locally, with the chart code untouched. Release notes for 2.4 were requested, but no draft appears. Standing decisions: PostgreSQL as primary database, JWT with refresh tokens for auth, Tailwind for all CSS, Redis for caching, no emails sent on the user's behalf, pytest before every commit, no new third-party dependencies without asking, and no changes to the billing module's public API. Remaining work: finish the export endpoint, review two reporting PRs, and write the migration guide, which is at risk pending the open schema discussion. The login layout, lint failure, and rename results were not confirmed."
+    },
+    {
+      "k": 3,
+      "seeded": 12,
+      "recall": 1.0,
+      "summary_only": 1.0,
+      "retained": 1.0,
+      "ledger_entries": 12,
+      "audit_retention": 0.6666666666666666,
+      "summary_chars": 1039,
+      "dropped": [
+        "C-0001",
+        "C-0002",
+        "C-0005",
+        "P-0001"
+      ],
+      "pinned_chars": 1990,
+      "t_pre_compact_s": 7.29,
+      "t_post_compact_s": 0.74,
+      "t_session_start_s": 0.002,
+      "items": [
+        {
+          "item": "Let's go with PostgreSQL as the primary database. Not Mongo,",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "For auth we'll use JWT with refresh tokens.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Important: never send any email on my behalf. Draft it and s",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Always run pytest before you commit anything. No exceptions.",
+          "type": "process",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "The public API of the billing module must not change; other ",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Use Tailwind for all CSS from now on.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Do not add new third-party dependencies without asking me fi",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Use Redis for caching.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Infra is Terraform only. No click-ops in the console.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "All dates in API responses are ISO 8601 strings, UTC.",
+          "type": "constraint",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Assume Q3 data is excluded from every report because of the ",
+          "type": "premise",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        },
+        {
+          "item": "Front-end tests use Vitest, not Jest.",
+          "type": "decision",
+          "in_ledger": true,
+          "in_summary": true,
+          "in_pinned": true
+        }
+      ],
+      "summary": "The conversation repeated the same requests many times, so the work itself is limited. Completed: a composite index on (account_id, created_at) was added in a migration, cutting the slow chart query from 2.3 s to 40 ms locally, with the chart code left untouched. The sprint burn-down, open-issue summary, and standup review were also produced. Remaining: fixing the login header overlap on narrow screens, revising the onboarding copy, resolving the yellow lint run, renaming the utils helper, drafting 2.4 release notes, finishing the export endpoint, reviewing two reporting PRs, and writing the migration guide, which is at risk pending the schema discussion. Standing instructions include PostgreSQL as the primary database, JWT with refresh tokens, Redis for caching, Tailwind for CSS, Vitest for front-end tests, pytest before every commit, no new dependencies without asking, no emails sent on the user's behalf, an unchanged billing public API, Terraform-only infrastructure, UTC ISO 8601 dates, and Q3 data excluded from reports."
+    }
+  ],
+  "extractor": "openrouter:anthropic/claude-haiku-5.5",
+  "pass": true
+}

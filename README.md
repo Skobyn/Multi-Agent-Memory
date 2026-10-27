@@ -26,7 +26,7 @@ merely advise. Read [`docs/INTENT.md`](docs/INTENT.md) for the why and
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Plugin skeleton, hooks wired and logging, transcript reader, ledger store, embeddings and decision-model adapters, Tier 0 gate (advisory), Bash write classifier | **done** |
-| 1 | Extractor (incremental + full pass), entailment audit, behavior watch, `/ledger` command | next |
+| 1 | Extractor (incremental on each prompt, full pass at compaction, background after Stop and SessionEnd), Jev entailment audit, post-compaction behavior watch, `/ledger` command, three-compaction exit check | **done** |
 | 2 | Gate Tiers 1–3, resample-before-deny, calibration, enforcement on | |
 | 3 | DecisionDrift-Bench | |
 | 4 | Subagent/agent-team checks, dependency graph, panel, TS Agent SDK packaging | |
@@ -57,11 +57,19 @@ Claude Code's own auto-memory for the project:
   transcripts/          verbatim captures taken at PreCompact and SessionEnd
 ```
 
-Check it is alive:
+Check it is alive, and inspect or edit the ledger (also available as `/ledger` inside Claude Code):
 
 ```bash
 python3 -I bin/em-hook status
+python3 -I bin/em-hook ledger list
+python3 -I bin/em-hook ledger add --type constraint --statement "Never send email on my behalf; draft only." --user
 ```
+
+What happens during a session: every prompt you send is scanned for durable decisions and constraints
+(a Haiku-class call that never delays the turn); before each compaction the transcript is captured and
+fully extracted; after each compaction every ledger entry is checked against the summary, first by
+literal anchors, then by a Jev yes/no, and whatever the summary dropped is re-injected verbatim; the
+first three tool batches after a compaction are checked for conflicts with the pinned entries.
 
 ## Configuration
 
@@ -89,8 +97,13 @@ anything, and entries that depended on it are flagged for review.
 pip install -e .[dev]
 pytest -q                      # unit tests, offline
 EM_LIVE_TESTS=1 pytest -q -k live   # one live call to the decision model
-bash scripts/smoke.sh          # drive every hook with sample payloads
+bash scripts/smoke.sh          # drive every hook with sample payloads (offline)
+EPISTEMIC_DATA_DIR=/tmp/p1 python3 -I scripts/phase1_check.py   # live three-compaction exit check
 ```
+
+On 2026-10-27 the exit check recorded extraction recall 100% at each of three compactions; at the
+third, a 150-word generic summary retained 0 of 12 seeded items, the audit flagged all 12, and the
+pin block re-injected them (retained 100%). PreCompact took 7–13 s, PostCompact under 1 s.
 
 Transcript fixtures under `tests/fixtures/` cover Claude Code 2.1.311 and the older
 `compact_boundary` format; the reader is defensive because the format is undocumented.
