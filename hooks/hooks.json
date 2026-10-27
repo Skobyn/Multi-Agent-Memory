@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook session_start", "timeout": 5}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook session_end"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook user_prompt_submit", "async": true, "timeout": 30}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+       "hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook pre_tool_use", "timeout": 25}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+       "hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook post_tool_use", "async": true, "timeout": 10}]}
+    ],
+    "PostToolBatch": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook post_tool_batch", "timeout": 5}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook stop", "timeout": 25}]}
+    ],
+    "PreCompact": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook pre_compact", "timeout": 60}]}
+    ],
+    "PostCompact": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook post_compact", "timeout": 15}]}
+    ],
+    "SubagentStart": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook subagent_start", "timeout": 5}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/bin/em-hook hook subagent_stop", "timeout": 25}]}
+    ]
+  }
+}
