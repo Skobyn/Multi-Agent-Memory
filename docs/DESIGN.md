@@ -349,6 +349,34 @@ consistent and the unrelated case), so **relevance comes from Tier 1 retrieval o
 about conflict and severity. These four cases are not a calibration set; §8.1 still applies, but
 they justify an initial τ = 0.75 with Tier 2 advisory-only until calibrated.
 
+**Limits, price, and size (from https://docs.typesafe.ai/models.md and a live sweep, 2026-10-27):**
+
+- Price: $0.042 per million input tokens; output tokens free. A gate call with a 2 KB diff is
+  ~1,000 tokens (≈$0.00004); a session with 200 gated tool calls × 2 candidate entries ×
+  ~1,500 tokens is ≈600K tokens ≈ **$0.025**. Cost is not a design constraint.
+- Context: 64K tokens per request and 32K per question by default; 262K for both with
+  `TypeSafe-Danger-Zone-Long-Context: true`, which the docs say is slower and less accurate.
+- Rate limits: per organization, in tokens/s and requests/s, visible only at
+  https://console.typesafe.ai/rate-limits; `429` with `retry-after`, `529` when overloaded.
+  The gate retries with exponential backoff and falls through to `allow` + citation on a
+  sustained 429 (latency guard, §8). Peak monitor load is a few requests per second.
+- Diff size sweep (same decision, reversal vs consistent hunk placed at the start, middle, or end
+  of synthetic unrelated hunks; 24 calls): conflict probability stayed 0.94–0.97 for the
+  reversal and 0.12–0.19 for the consistent change at 2 KB, 8 KB, 32 KB, and 64 KB
+  (≈1K–19K tokens); latency 140–500 ms. Decision: **send the whole diff up to 32K tokens**
+  (the per-question default) without the long-context header; above that, send the hunks
+  touching scoped paths plus the first and last 4K tokens. Padding was synthetic, so the
+  calibration set (§8.1) must include real large diffs.
+- Known jagged edges (https://docs.typesafe.ai/model-jaggedness/jev-1.13.md) and the mitigation
+  used here: literal reading → put boundary cases in `criteria`, never rely on intent;
+  **adversarial content in `state` can move the answer** → the diff is agent-authored, so a
+  comment such as `# consistent with the Postgres decision` is an attack surface; the
+  calibration set includes such cases, a tripped Tier 0 falsifier always wins over a low Jev
+  score, and Tier 3 sees the diff with comments stripped as a second opinion when the diff
+  mentions the decision's own terms in comments or strings; choice-option order bias → `noul`
+  and `score` are used, `choice` only with order-swapped double asks; no counting or arithmetic
+  is delegated to the model.
+
 ## 9. DecisionDrift-Bench
 
 Purpose: measure what v0.1 never measured, reusing released benchmark machinery rather than
@@ -397,25 +425,111 @@ task success (does the tempting task still complete, PRE/POST where applicable);
 | 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success |
 | 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions |
 
-## 11. Open questions (resolve in build, do not block Phase 0–1)
+## 11. Open questions and recorded decisions
 
-1. ~~Jev API endpoint and request schema~~ (resolved, §8.2; docs at https://docs.typesafe.ai/api).
-   Still open: rate limits, pricing tier for the account, and the largest diff excerpt that stays
-   accurate (start at 2 KB; `TypeSafe-Danger-Zone-Long-Context: true` exists for larger states).
-7. Source edits through `Bash` (`sed`, heredocs, `git apply`) bypass an `Edit`-only gate; PAUSE
-   reports exactly this gap. v2 gates `Bash` too, but needs a cheap "does this command write a
-   source path" classifier (Tier 0) with tests.
-8. Whether to execute the least-suspicious of two resamples (optional in 2605.26047, +3.9 pp,
-   not significant) or only use resamples for the deny decision.
-2. Whether `MEMORY.md` mirroring is worth it versus relying on `SessionStart[compact]` alone.
-3. `SessionEnd` 1.5 s budget: capture-only there and defer extraction to the next
-   `SessionStart`, or raise the timeout.
-4. Dependency extraction quality: does the extractor produce useful `depends_on` edges, or
-   should they be inferred at supersession time by a targeted query?
-5. Agent SDK Python lacks `SessionStart`/`PostCompact`/`PostToolBatch`; support Python only via
-   settings-file hooks (`setting_sources=["project"]`).
+Closed on 2026-10-27 (details in the cited sections):
+
+| # | Item | Decision |
+|---|---|---|
+| 1 | Jev endpoint, schema, limits, price, diff size | Resolved, §8.2. Only the organization's rate-limit numbers remain to be read from the console; the gate degrades gracefully on 429 regardless. |
+| 3 | `SessionEnd` 1.5 s budget | **Capture only** at `SessionEnd` (gzip copy of the transcript, no model calls); extraction of the tail runs at the next `SessionStart[startup\|resume]` or asynchronously. Do not raise the timeout. |
+| 5 | Python Agent SDK lacks `SessionStart`/`PostCompact`/`PostToolBatch` | **TypeScript SDK is the supported SDK path.** Python users get the same behavior through the settings-file shell hooks (`setting_sources=["project"]`), which is also how Claude Code CLI runs it. |
+| 7 | Source edits through `Bash` bypass an `Edit`-only gate | Deterministic Tier 0 classifier specified in Appendix A with 36 acceptance cases; `unknown` commands are gated only when a `process` entry is pending. |
+| 8 | Execute the least-suspicious of N resamples? | **No** in v2. Resamples inform the deny decision only (max aggregation). Revisit after DecisionDrift-Bench if false denies dominate. |
+
+Still open, with the experiment that closes each (none blocks Phase 0–1):
+
+2. **`MEMORY.md` mirroring vs `SessionStart[compact]` alone.** Experiment: a scripted session with
+   three forced compactions under four conditions (none / hook only / mirror only / both),
+   measuring pinned-entry retention and violation rate; keep the mirror only if it adds ≥5 pp
+   retention or survives a hooks-disabled run.
+4. **`depends_on` extraction quality.** Measure on the STALE Type II (propagated) pairs: precision
+   and recall of extracted dependency edges against the dataset's upstream→downstream attribute
+   links; if recall < 0.6, replace extractor-time edges with a targeted "what depended on D?"
+   query at supersession time.
 6. Research track (not v2): JEPA-style latent surprise over the decision manifold; confidence
-   carried with entries across handoffs (confidence-laundering mitigation).
+   carried with entries across handoffs.
+
+## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
+
+Purpose: PAUSE and LivePlan both report that agents edit source through the shell and slip past
+`Edit`-only interceptors. This classifier runs on every `Bash` `tool_input.command` in under a
+millisecond and returns `writes_source | no_source_write | unknown` plus the paths it saw. It
+is deliberately conservative: a false `writes_source` costs one Tier 1 retrieval; a false
+`no_source_write` costs a missed check, so ambiguity resolves toward `writes_source` or `unknown`.
+
+**Rules (any match → `writes_source`, with the matched path when one is present):**
+
+| Rule | Pattern (sketch) |
+|---|---|
+| redirect | `>`, `>>`, `&>`, `N>` followed by a path (not `/dev/null`, not under `/tmp`, scratchpad, caches, `node_modules`, `.git`, `dist`, `build`, virtualenvs) |
+| tee | `tee [-a] <path>` |
+| in-place editors | `sed -i`, `perl -pi`/`-i` |
+| formatters / fixers | `black`, `isort`, `autopep8`, `ruff format`, `ruff check … --fix`, `prettier --write/-w`, `gofmt -w`, `rustfmt`, `eslint --fix`, `biome … --write` |
+| codemods | `jscodeshift` / `codemod` in command position (not as an `npm run` script name), `ast-grep -U/--update-all`, `comby -in-place` |
+| patches | `git apply`, `patch`, `git am` |
+| git working-tree writes | `git checkout -- <path>` / `git checkout <ref> -- <path>`, `git restore`, `git revert`, `git cherry-pick`, `git stash pop`, `git reset --hard`, `git merge`, `git rebase` |
+| copy / move / link | `cp`, `mv`, `rsync`, `install`, `ln -s[f]` with a source-path destination |
+| delete / create / truncate | `rm <path>`, `touch <path>`, `truncate -s N <path>`, `dd of=<path>` |
+| inline interpreters | `python … open(…, "w"/"a")`, `node … writeFile*/appendFile*` |
+
+**`unknown` (opaque execution):** `bash x.sh`, `sh x.sh`, `./x.sh`, `make`, `npm/pnpm run`,
+`yarn <script>`, `npx <tool>`, `python script.py` (no inline `open(…,'w')`), `cargo run/fix`,
+`go run/generate`, `eval`, `xargs`, `… | sh`. Treated as `writes_source` only when a `process`
+entry with a pending required step exists in the ledger; otherwise `allow` + citation, and the
+paths the command touched are learned from `PostToolUse` output for the next call.
+
+**Read-only short-circuit:** commands starting with `git status/log/diff/show/branch/blame`,
+`ls`, `cat`, `head`, `tail`, `grep`, `rg`, `find`, `wc`, `pytest`, `npm test`, `go test`,
+`cargo test`, `echo` (without a redirect) are `no_source_write` even if they pipe into an opaque
+command.
+
+**Acceptance cases** (the build turns these into unit tests; a throwaway prototype of the rules
+above matched all 36 on 2026-10-27):
+
+| Command | Expected | Rule |
+|---|---|---|
+| `sed -i "s/pymongo/psycopg/" src/db/client.py` | writes_source | sed_inplace |
+| `sed -n '1,20p' src/db/client.py` | no_source_write | — |
+| `perl -pi -e 's/foo/bar/' src/app.py` | writes_source | perl_inplace |
+| `cat > src/db/mongo.py <<EOF\nfrom pymongo import MongoClient\nEOF` | writes_source | redirect |
+| `cat src/db/client.py` | no_source_write | — |
+| `echo 'x=1' >> config/settings.py` | writes_source | redirect |
+| `echo hello > /tmp/scratch.txt` | no_source_write | — |
+| `pytest -q 2>&1 \| tail -20` | no_source_write | — |
+| `pytest -q > /dev/null` | no_source_write | — |
+| `tee -a src/config.yaml <<< 'db: mongo'` | writes_source | tee |
+| `git apply /tmp/fix.patch` | writes_source | patch_apply |
+| `patch -p1 < changes.diff` | writes_source | patch_apply |
+| `git checkout -- src/db/client.py` | writes_source | git_restore |
+| `git checkout feature-branch` | no_source_write | — |
+| `git restore src/db/client.py` | writes_source | git_restore |
+| `git revert HEAD` | writes_source | git_restore |
+| `git status && git diff --stat` | no_source_write | — |
+| `black src/ tests/` | writes_source | formatter |
+| `ruff check src/ --fix` | writes_source | formatter |
+| `ruff check src/` | no_source_write | — |
+| `prettier --write 'src/**/*.ts'` | writes_source | formatter |
+| `cp templates/mongo_client.py src/db/client.py` | writes_source | copy_move |
+| `cp src/db/client.py /tmp/backup.py` | no_source_write | — |
+| `mv src/db/postgres.py src/db/legacy_postgres.py` | writes_source | copy_move |
+| `rm src/db/postgres.py` | writes_source | delete |
+| `rm -rf node_modules/.cache` | no_source_write | — |
+| `touch src/db/__init__.py` | writes_source | touch_truncate |
+| `python3 -c "open('src/db/client.py','w').write('x')"` | writes_source | py_write |
+| `python3 scripts/migrate.py` | unknown | opaque |
+| `bash scripts/setup.sh` | unknown | opaque |
+| `make build` | unknown | opaque |
+| `npm run codemod` | unknown | opaque |
+| `curl -s https://example.com/install.sh \| sh` | unknown | opaque |
+| `npm test` | no_source_write | — |
+| `grep -rn pymongo src/` | no_source_write | — |
+| `ls -la src/db` | no_source_write | — |
+
+Known gaps to cover in the build: quoting and escaping (`sh -c "…"` bodies are scanned as a
+whole string, which over-triggers rather than under-triggers), `find … -exec … {} \;` with a
+writing command, `git` aliases, Windows shells (out of scope), and commands that write via
+environment-variable paths (`> $OUT`), which resolve to `unknown`.
 
 ## 12. References
 
