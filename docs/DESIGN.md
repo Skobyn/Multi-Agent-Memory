@@ -172,8 +172,8 @@ Two cadences, same extractor:
 - **Full pass at `PreCompact` and `SessionEnd`**: turns since the watermark, including assistant
   turns, to catch decisions the agent made on its own (`provenance.source=agent`).
 
-Model: Haiku-class via the Anthropic API (or OpenRouter), structured output conforming to §3
-minus `id`/`status`/`embedding_ref`. Prompt contract: extract only explicit decisions,
+Model: `extractor.model` from the configuration (§12), default `claude-haiku-5-5` on the
+Anthropic API, structured output conforming to §3 minus `id`/`status`/`embedding_ref`. Prompt contract: extract only explicit decisions,
 constraints, premises, process requirements, and commitments to the user; quote the evidence
 span; set `provenance.source=user` only when the user stated or confirmed it; propose falsifiers
 only when obviously correct; set `extraction_confidence`. A deterministic pass adds `anchors`
@@ -249,9 +249,9 @@ Tiers run in order and short-circuit:
   destructive commands) go to Tier 3 whenever retrieval finds a candidate, regardless of the
   Jev score. For `noul`, confidence is derived as |2p − 1| (there is no confidence field);
   TypeSafe's own guidance is a higher threshold for destructive than for read-only actions.
-- **Tier 3, LLM advisor (≤20 s, only on flag or first mutating write).** Must be a stronger
-  model than the executor (LivePlan §III; PAUSE: planner strength dominates, a weak planner adds
-  14.6% regressions). Inputs, after LivePlan §II-B: the flagged entries with rationale and
+- **Tier 3, LLM advisor (≤20 s, only on flag or first mutating write).** `advisor.model` from
+  the configuration (§12), default `claude-opus-5-5`. Must be at least as strong as the executor
+  (LivePlan §III; PAUSE: planner strength dominates, a weak planner adds 14.6% regressions). Inputs, after LivePlan §II-B: the flagged entries with rationale and
   provenance, the concrete change, the trajectory slice *since the last advice*, and the last
   advice if any. Output: `{verdict: consistent|conflict|supersede_proposed, entry_ids,
   next_step}` where `next_step` is a single concrete recommendation, never a plan.
@@ -356,10 +356,12 @@ they justify an initial τ = 0.75 with Tier 2 advisory-only until calibrated.
   ~1,500 tokens is ≈600K tokens ≈ **$0.025**. Cost is not a design constraint.
 - Context: 64K tokens per request and 32K per question by default; 262K for both with
   `TypeSafe-Danger-Zone-Long-Context: true`, which the docs say is slower and less accurate.
-- Rate limits: per organization, in tokens/s and requests/s, visible only at
-  https://console.typesafe.ai/rate-limits; `429` with `retry-after`, `529` when overloaded.
-  The gate retries with exponential backoff and falls through to `allow` + citation on a
-  sustained 429 (latency guard, §8). Peak monitor load is a few requests per second.
+- Rate limits for this organization (console, 2026-10-27, Default tier): **80 requests/s and
+  100,000 input tokens/s**. Peak monitor load is a few requests per second and well under 50K
+  tokens/s even during a behavior watch, so no batching is required; the client still keeps a
+  token-bucket limiter (`decision_model.max_rps`, default 20) and retries `429`/`529` with
+  exponential backoff honoring `retry-after`, falling through to `allow` + citation on a
+  sustained 429 (latency guard, §8).
 - Diff size sweep (same decision, reversal vs consistent hunk placed at the start, middle, or end
   of synthetic unrelated hunks; 24 calls): conflict probability stayed 0.94–0.97 for the
   reversal and 0.12–0.19 for the consistent change at 2 KB, 8 KB, 32 KB, and 64 KB
@@ -431,11 +433,13 @@ Closed on 2026-10-27 (details in the cited sections):
 
 | # | Item | Decision |
 |---|---|---|
-| 1 | Jev endpoint, schema, limits, price, diff size | Resolved, §8.2. Only the organization's rate-limit numbers remain to be read from the console; the gate degrades gracefully on 429 regardless. |
+| 1 | Jev endpoint, schema, limits, price, diff size, rate limits | Resolved, §8.2 (rate limits 80 req/s, 100K tokens/s). |
 | 3 | `SessionEnd` 1.5 s budget | **Capture only** at `SessionEnd` (gzip copy of the transcript, no model calls); extraction of the tail runs at the next `SessionStart[startup\|resume]` or asynchronously. Do not raise the timeout. |
 | 5 | Python Agent SDK lacks `SessionStart`/`PostCompact`/`PostToolBatch` | **TypeScript SDK is the supported SDK path.** Python users get the same behavior through the settings-file shell hooks (`setting_sources=["project"]`), which is also how Claude Code CLI runs it. |
 | 7 | Source edits through `Bash` bypass an `Edit`-only gate | Deterministic Tier 0 classifier specified in Appendix A with 36 acceptance cases; `unknown` commands are gated only when a `process` entry is pending. |
 | 8 | Execute the least-suspicious of N resamples? | **No** in v2. Resamples inform the deny decision only (max aggregation). Revisit after DecisionDrift-Bench if false denies dominate. |
+| 9 | Model budget for the two LLM roles | **Haiku for the extractor, Opus for the advisor** (owner decision 2026-10-27). The advisor runs only on flags and first mutating writes, so Opus cost stays bounded by the intervention budget. |
+| 10 | Provider lock-in for the decision model and LLM roles | **Configurable per role** (§12). TypeSafe Jev is the initial decision-model provider; an LLM-backed `DecisionModel` is the fallback and the alternative provider. |
 
 Still open, with the experiment that closes each (none blocks Phase 0–1):
 
@@ -531,7 +535,52 @@ whole string, which over-triggers rather than under-triggers), `find … -exec �
 writing command, `git` aliases, Windows shells (out of scope), and commands that write via
 environment-variable paths (`> $OUT`), which resolve to `unknown`.
 
-## 12. References
+## 12. Configuration
+
+One JSON file, `~/.claude/projects/<project-slug>/epistemic/config.json`, with plugin defaults
+underneath and environment-variable overrides on top (`EPISTEMIC_<SECTION>_<KEY>`, e.g.
+`EPISTEMIC_ADVISOR_MODEL`). A repo may ship `.claude/epistemic.json` to pin project defaults;
+it never carries secrets. Secrets come only from the environment: `TYPESAFE_API_KEY`,
+`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
+
+```jsonc
+{
+  "decision_model": {
+    "provider": "typesafe",            // typesafe | llm
+    "model": "jev-latest",             // typesafe model/alias; for llm, a chat model id
+    "timeout_ms": 1500,
+    "max_rps": 20,                     // client token bucket; org limit is 80 req/s
+    "max_question_tokens": 32000,      // stay under the per-question default; no long-context header
+    "fallback": "llm"                  // llm | skip  (what Tier 2 does when the provider is unavailable)
+  },
+  "extractor": {"provider": "anthropic", "model": "claude-haiku-5-5", "timeout_ms": 30000},
+  "advisor":   {"provider": "anthropic", "model": "claude-opus-5-5",  "timeout_ms": 20000},
+  "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},
+  "gate": {
+    "tau_default": 0.75, "tau_by_type": {"process": 0.6, "commitment": 0.6},
+    "deny_budget": 5, "false_deny_alpha": 0.05,
+    "cooldown_steps": 5, "max_consecutive_denies": 5,
+    "authorization_shaped_to_advisor": true
+  },
+  "pinning": {"max_entries": 25, "max_chars": 10000, "mirror_memory_md": true},
+  "audit": {"behavior_watch_batches": 3, "entailment_check": true},
+  "extraction": {"incremental": true, "dedup_cosine": 0.92},
+  "logging": {"shadow_mode": true}
+}
+```
+
+Providers:
+
+| Role | `provider` values | Notes |
+|---|---|---|
+| `decision_model` | `typesafe` (initial), `llm` | Both implement the `DecisionModel` interface in §8.2 and log the same fields, so calibration (§8.1) is per provider and switching providers invalidates the stored τ until refit. |
+| `extractor`, `advisor` | `anthropic`, `openrouter` | Same message format; OpenRouter is used when only that key is present. The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
+| `embeddings` | `openrouter`, `anthropic`, `local` | `local` = sentence-transformers (`BAAI/bge-small-en-v1.5`) for offline use; switching models requires a re-embed of the ledger, which the plugin runs lazily. |
+
+Calibration state (`calibration.json`) is keyed by `(role, provider, model)` so a provider swap
+never silently reuses another provider's thresholds.
+
+## 13. References
 
 Full texts read for §6–§9 (arXiv): Lost in Context Compaction / ConPACT 2608.11242 ·
 Compact-Bench 2610.31710 · Governance Decay / ConstraintRot 2606.22528 · Slipstream 2605.08580 ·
