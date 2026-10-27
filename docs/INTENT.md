@@ -29,21 +29,29 @@ not merely advise.
 
 ## 3. Why now
 
-- **The premise is now published and replicated.** LLM compaction summaries keep ≤16–17% of
-  injected constraints (*Lost in Compaction* 2608.11242, *Compact-Bench* 2610.31710).
-  Constraint violations go 0% → ~30% after one compaction and ~78% after four; re-injecting
-  constraints verbatim restores 0% (*Governance Decay* 2606.22528). Agents that retrieve an
-  updated fact still act on the stale one (*STALE* 2605.06527). Retrieval is not the
-  bottleneck. Action-time checking is.
+- **The premise is now published and replicated** (full texts read). Compactors keep on average
+  17% of injected side-constraints, ranging 0–36% by compactor, and summaries keep ≤16% of
+  recurring literal details versus 79% for mechanical extraction (*Lost in Context Compaction*
+  2608.11242, *Compact-Bench* 2610.31710). Constraint violations go 0% → 30% pooled after one
+  compaction (up to 59% per model) and 78% after four; a pinned buffer re-injected verbatim after
+  every compaction restores 0% and raises allowed-action utility from 90% to 99% (*Governance
+  Decay* 2606.22528). Agents retrieve updated evidence 77% of the time yet rank the stale entry
+  first 84–88% of the time (*STALE* 2605.06527). Retrieval is not the bottleneck. Action-time
+  checking is.
 - **The hook surfaces now exist** (verified in Claude Code 2.1.311): `PreCompact` with the
   transcript path, `PostCompact` with the summary text, `SessionStart` matcher `compact`,
   `PreToolUse` deny / `updatedInput`, `PostToolBatch`, `Stop` block-with-reason, and built-in
   `prompt` / `agent` hook types for model-judged checks.
-- **Cheap typed decision models exist.** TypeSafe's Jev (System One, Sept 2026) answers a typed
-  yes/no or choice with a probability in ~100–400 ms at ~$1e-4. Accuracy trails LLMs, so it is
-  the gate in front of an LLM advisor, not the judge (the REFLEX pattern, 2609.26532).
-- **Steering with a cheap monitor is proven to pay.** LivePlan (2608.06701): rule-based
-  pre-execution monitor + LLM advisor on flag, +9.9% SWE-bench Verified/Pro at ~$0.08/task.
+- **Cheap typed decision models exist, and we verified one.** TypeSafe's Jev (System One,
+  Sept 2026) answers a typed yes/no, choice, or rubric score with a probability. Called from this
+  environment on the exact gate question, it separated a reversal (0.98) from a consistent change
+  (0.07) in under 220 ms. It is strong on "which option" and weak on "is this authorized" (REFLEX
+  2609.26532), so it is the gate in front of an LLM advisor, not the judge.
+- **Steering with a cheap monitor is proven to pay.** LivePlan (2608.06701): deterministic
+  pre-execution monitor + LLM advisor on flag, +9.9 pp average (up to +15.2) on SWE-bench
+  Verified/Pro, advisor cost $0.01–0.06 per task, with far fewer regressions than periodic
+  advice. PAUSE (2610.29870): a single advisor call at the first source edit matches it at
+  ~$0.04/task.
 
 ## 4. What we are building
 
