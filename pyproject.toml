@@ -1,23 +1,25 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "dual-agent-memory"
-version = "0.1.0"
-description = "Dual-Agent Memory Architecture: Epistemic Monitor + Pull-Based Retrieval"
+name = "epistemic-monitor"
+version = "2.0.0a0"
+description = "The enforcement layer for agent memory: decision ledger, compaction audit, and conformance gate for Claude Code."
 requires-python = ">=3.10"
-dependencies = [
-    "sqlite-vec>=0.1.1",
-    "numpy>=1.24.0",
-]
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = []
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-]
+local-embeddings = ["sentence-transformers>=3.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+em = "epistemic_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"

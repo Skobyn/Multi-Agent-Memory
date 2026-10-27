@@ -555,7 +555,7 @@ it never carries secrets. Secrets come only from the environment: `TYPESAFE_API_
   },
   "extractor": {"provider": "anthropic", "model": "claude-haiku-5-5", "timeout_ms": 30000},
   "advisor":   {"provider": "anthropic", "model": "claude-opus-5-5",  "timeout_ms": 20000},
-  "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},
+  "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},   // openrouter | local | none
   "gate": {
     "tau_default": 0.75, "tau_by_type": {"process": 0.6, "commitment": 0.6},
     "deny_budget": 5, "false_deny_alpha": 0.05,
@@ -575,7 +575,7 @@ Providers:
 |---|---|---|
 | `decision_model` | `typesafe` (initial), `llm` | Both implement the `DecisionModel` interface in §8.2 and log the same fields, so calibration (§8.1) is per provider and switching providers invalidates the stored τ until refit. |
 | `extractor`, `advisor` | `anthropic`, `openrouter` | Same message format; OpenRouter is used when only that key is present. The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
-| `embeddings` | `openrouter`, `anthropic`, `local` | `local` = sentence-transformers (`BAAI/bge-small-en-v1.5`) for offline use; switching models requires a re-embed of the ledger, which the plugin runs lazily. |
+| `embeddings` | `openrouter`, `local`, `none` | `local` = sentence-transformers (`BAAI/bge-small-en-v1.5`) for offline use; `none` disables vector retrieval (scope and keyword only). Anthropic has no first-party embeddings endpoint, so an `anthropic` value is not offered. Switching models requires a re-embed of the ledger, which the plugin runs lazily. |
 
 Calibration state (`calibration.json`) is keyed by `(role, provider, model)` so a provider swap
 never silently reuses another provider's thresholds.

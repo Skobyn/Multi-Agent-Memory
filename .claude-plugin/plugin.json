@@ -1,0 +1,9 @@
+{
+  "name": "epistemic-monitor",
+  "version": "2.0.0-alpha.0",
+  "description": "The enforcement layer for agent memory: a typed decision ledger kept outside compaction, audited after every compaction, and (from Phase 2) enforced at tool-call time.",
+  "author": {"name": "Scott / Apex Insights"},
+  "homepage": "https://github.com/Skobyn/Multi-Agent-Memory",
+  "license": "MIT",
+  "keywords": ["memory", "compaction", "hooks", "decision-ledger", "epistemic-monitoring"]
+}
