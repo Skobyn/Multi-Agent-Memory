@@ -209,12 +209,58 @@ runs on Tier 0/1 flags only.
 
 ### 8.2 Decision-model adapter
 
-`DecisionModel` interface: `noul(statement: str, context: str) -> (p_true: float, latency_ms)`,
-`choice(options, context) -> (index, p)`. Implementations: `JevDecisionModel` (TypeSafe
-System One; endpoint and schema to be confirmed in the first build session, since only the
-host and the path prefix `/api/v1/systemone` are known) and `LLMDecisionModel` (Haiku-class,
-verbalized probability) as fallback. Both are logged with the same fields so calibration is
-per-implementation.
+`DecisionModel` interface: `noul(instructions, state, criteria?) -> (p_true: float, latency_ms)`,
+`score(instructions, state, levels[]) -> (expected, probabilities, confidence)`,
+`choice(instructions, state, options{}) -> (choice, confidence, probabilities)`.
+Implementations: `JevDecisionModel` (TypeSafe System One) and `LLMDecisionModel` (Haiku-class,
+verbalized probability) as fallback. Both log the same fields so calibration is per-implementation.
+
+**Jev API, verified 2026-10-27 against the live service** (spec at
+`https://api.typesafe.ai/openapi.json`, v0.2.0):
+
+- `POST https://api.typesafe.ai/v1/systemone`, header `Authorization: Bearer <TYPESAFE_API_KEY>`
+  (in Claude Code cloud sessions the proxy injects it; locally read it from the environment).
+- Request: `{"model": "jev-latest", "state": <string | object | array>, "questions": {<name>: Question}}`.
+  Question types: `noul` (yes/no → probability), `choice` (`criteria: {name: description}`),
+  `score` (`criteria: [level0, level1, …]`, ≤10 levels), `box` (images; not used).
+  Several questions ride on one `state` in a single call.
+- Response: `{"model": "jev-1.14.0", "answers": {<name>: Answer}, "usage": {"input_tokens", "output_tokens"}}`.
+  `NoulAnswer.noul` is p(true); `ScoreAnswer` has `score` (expected level), `probabilities`,
+  `confidence`; `ChoiceAnswer` has `choice`, `confidence`, `probabilities`.
+- Measured on the gate-shaped question below: 160–215 ms round trip, ~560 input tokens per call.
+
+Gate question shape (one call per candidate entry; `state` is a JSON object, which the API accepts):
+
+```json
+{"model": "jev-latest",
+ "state": {"decision": {"id": "D-0042", "type": "decision",
+                        "statement": "Use PostgreSQL as the primary database.",
+                        "rationale": "…", "provenance": "user"},
+           "planned_change": {"tool": "Edit", "file": "src/db/client.py", "diff": "…≤2 KB…"}},
+ "questions": {
+   "conflict": {"type": "noul",
+                "instructions": "Does the planned change conflict with the decision?",
+                "criteria": {"true": "The change introduces, switches to, or depends on something the decision rules out, or works against the decision's intent.",
+                             "false": "The change is consistent with the decision or unrelated to it."}},
+   "severity": {"type": "score",
+                "instructions": "How serious would it be to let this change through given the decision?",
+                "criteria": ["harmless or unrelated", "minor deviation worth a citation",
+                             "clear contradiction that should be reviewed", "direct reversal of a user decision"]}}}
+```
+
+Probe results (4 hand-written cases, same decision):
+
+| Case | conflict p | severity (0–3) |
+|---|---|---|
+| Replace SQLAlchemy engine with `pymongo.MongoClient` | 0.98 | 2.99 |
+| Add `pool_size` to the Postgres engine | 0.07 | 0.20 |
+| Unrelated logging change | 0.05 | 0.09 |
+| Add a Mongo "cache side-store" while keeping Postgres | 0.91 | 2.64 |
+
+A separate "is this change related to the decision?" noul was uninformative (≈0.42 for both the
+consistent and the unrelated case), so **relevance comes from Tier 1 retrieval only**; Jev is asked
+about conflict and severity. These four cases are not a calibration set; §8.1 still applies, but
+they justify an initial τ = 0.75 with Tier 2 advisory-only until calibrated.
 
 ## 9. DecisionDrift-Bench
 
@@ -243,8 +289,8 @@ with CIs over ≥5 seeds; keep per-run JSON as v0.1 did.
 
 ## 11. Open questions (resolve in build, do not block Phase 0–1)
 
-1. Jev API endpoint, request schema, rate limits, and whether context length suits diff
-   excerpts (expect to truncate to ~2 KB).
+1. ~~Jev API endpoint and request schema~~ (resolved, §8.2). Still open: rate limits, pricing
+   tier for the account, and the largest diff excerpt that stays accurate (start at 2 KB).
 2. Whether `MEMORY.md` mirroring is worth it versus relying on `SessionStart[compact]` alone.
 3. `SessionEnd` 1.5 s budget: capture-only there and defer extraction to the next
    `SessionStart`, or raise the timeout.
@@ -255,7 +301,7 @@ with CIs over ≥5 seeds; keep per-run JSON as v0.1 did.
 6. Research track (not v2): JEPA-style latent surprise over the decision manifold; confidence
    carried with entries across handoffs (confidence-laundering mitigation).
 
-## 12. References (headline figures from abstracts; full texts were not reachable from this environment)
+## 12. References
 
 Lost in Compaction 2608.11242 · Compact-Bench 2610.31710 · Governance Decay 2606.22528 ·
 Slipstream 2605.08580 · STALE/CUPMem 2605.06527 · Remember the Decision 2605.10870 ·
