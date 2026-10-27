@@ -27,7 +27,7 @@ merely advise. Read [`docs/INTENT.md`](docs/INTENT.md) for the why and
 |---|---|---|
 | 0 | Plugin skeleton, hooks wired and logging, transcript reader, ledger store, embeddings and decision-model adapters, Tier 0 gate (advisory), Bash write classifier | **done** |
 | 1 | Extractor (incremental on each prompt, full pass at compaction, background after Stop and SessionEnd), Jev entailment audit, post-compaction behavior watch, `/ledger` command, three-compaction exit check | **done** |
-| 2 | Gate Tiers 1–3, resample-before-deny, calibration, enforcement on | |
+| 2 | Gate Tiers 1–3 (retrieval, Jev conflict + severity with per-type thresholds and near-threshold resampling, advisor with the session's recent tool calls), process-order falsifier, resample-before-deny with budgets and caps, calibration from labels, Stop turn check, enforcement on, live gate bench | **done** |
 | 3 | DecisionDrift-Bench | |
 | 4 | Subagent/agent-team checks, dependency graph, panel, TS Agent SDK packaging | |
 
@@ -74,8 +74,11 @@ first three tool batches after a compaction are checked for conflicts with the p
 ## Configuration
 
 One JSON file, `~/.claude/projects/<slug>/epistemic/config.json`, with env overrides such as
-`EPISTEMIC_GATE_ENFORCE=true`. Defaults: TypeSafe Jev as the decision model, Haiku as the
-extractor, Opus as the advisor, OpenRouter embeddings. Secrets come only from `TYPESAFE_API_KEY`,
+`EPISTEMIC_GATE_ENFORCE=false`. Defaults: TypeSafe Jev as the decision model, Haiku as the
+extractor, Opus as the advisor, OpenRouter embeddings. The advisor model needs an account that can
+pay for it: OpenRouter pre-checks each request against prepaid credits, so with a zero balance Opus
+and Sonnet requests are refused (HTTP 402) while Haiku passes; set `EPISTEMIC_ADVISOR_MODEL` or add
+credits. Secrets come only from `TYPESAFE_API_KEY`,
 `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`. Full schema in
 [`docs/DESIGN.md` §12](docs/DESIGN.md#12-configuration).
 
@@ -104,6 +107,32 @@ EPISTEMIC_DATA_DIR=/tmp/p1 python3 -I scripts/phase1_check.py   # live three-com
 On 2026-10-27 the exit check recorded extraction recall 100% at each of three compactions; at the
 third, a 150-word generic summary retained 0 of 12 seeded items, the audit flagged all 12, and the
 pin block re-injected them (retained 100%). PreCompact took 7–13 s, PostCompact under 1 s.
+
+```bash
+EPISTEMIC_DATA_DIR=/tmp/p2 python3 -I scripts/phase2_check.py   # live gate bench (Phase 2 exit check)
+```
+
+On 2026-10-27 the gate bench (12 user-backed entries, 36 labeled tool calls, half used to calibrate,
+half held out) recorded on the held-out half: violation rate 0%, false-deny rate 0%, unflagged-path
+p95 560 ms, flagged-path p95 3.5 s with the advisor on Haiku. Results in `docs/results/`.
+
+## Enforcement
+
+The gate is on by default and budgeted. A tool call is denied only when it is **hard**: it trips a
+deterministic falsifier, or a user-backed entry is judged in conflict by the decision model and
+confirmed by the advisor (or, without calibration, scored at 0.9 or above). Agent-made entries only
+produce a citation. Each session gets at most 5 denies, at most 5 consecutive denies on one entry,
+and the advisor is called at most once per 5 tool calls per entry. The deny message always cites the
+entry and offers the two ways forward: revise the change, or `SUPERSEDE <id>: <reason>`.
+
+Calibrate thresholds from your own sessions:
+
+```bash
+python3 -I bin/em-hook ledger review          # recent gate decisions with model scores
+python3 -I bin/em-hook ledger label <tool_use_id> conflict|ok
+python3 -I bin/em-hook ledger mark-good <session_id>   # a session you know was fine
+python3 -I bin/em-hook ledger calibrate        # per-type thresholds, false-deny ceiling 2%
+```
 
 Transcript fixtures under `tests/fixtures/` cover Claude Code 2.1.311 and the older
 `compact_boundary` format; the reader is defensive because the format is undocumented.

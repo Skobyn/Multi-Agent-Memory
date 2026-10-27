@@ -22,11 +22,12 @@ from .config import Config
 from .decision_model import make_decision_model
 from .embeddings import make_embedder
 from .extractor import Extractor
-from .gate import format_citation, run_tier0
+from .calibration import load_calibration
+from .gate import GatePipeline
 from .llm import make_llm
 from .pinning import render_briefing, render_pinned
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, capture_transcript, read_turns, rows_to_turns
+from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, read_turns, rows_to_turns
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
 
@@ -36,8 +37,14 @@ def _session(payload: dict[str, Any]) -> str:
     return str(payload.get("session_id", "") or "unknown")
 
 
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
 def _apply_supersede_lines(text: str, by: str, store: LedgerStore, session_id: str) -> list[dict[str, Any]]:
     applied: list[dict[str, Any]] = []
+    if by == "agent":
+        # An agent showing the syntax in a code block (e.g. telling the user how to supersede) is not a supersession.
+        text = _FENCE_RE.sub("", text or "")
     for m in _SUPERSEDE_RE.finditer(text or ""):
         ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id)
         applied.append({"entry": m.group(1).upper(), "by": by, "ok": ok})
@@ -68,6 +75,59 @@ def _extractor_for(cfg: Config, store: LedgerStore, time_budget_s: float) -> Ext
     return Extractor(store, llm, embedder, dedup_cosine=float(ex.get("dedup_cosine", 0.92)),
                      max_chars_per_call=int(ex.get("max_chars_per_call", 24000)), max_calls=int(ex.get("max_calls", 6)),
                      time_budget_s=time_budget_s, min_confidence=float(ex.get("min_confidence", 0.5)))
+
+
+def _advisor_for(cfg: Config, store: LedgerStore):
+    try:
+        return make_llm(cfg.section("advisor"))
+    except Exception as e:  # noqa: BLE001
+        store.log_intervention({"kind": "component_unavailable", "component": "advisor_llm", "error": str(e)[:200]})
+        return None
+
+
+def _embedder_for(cfg: Config):
+    try:
+        return make_embedder(cfg.section("embeddings"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _tail_turns(transcript_path: str | None, max_bytes: int = 400_000) -> list:
+    """Parse only the tail of the transcript (it may be large and lagging)."""
+    if not transcript_path:
+        return []
+    p = Path(transcript_path)
+    if not p.exists():
+        return []
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as fh:
+            fh.seek(max(0, size - max_bytes))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    turns = []
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        turns.extend(t for t in rows_to_turns(row) if not t.is_sidechain)
+    return turns
+
+
+def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
+    lines = []
+    for t in _tail_turns(transcript_path)[-(max_turns * 3):]:
+        if t.kind in (KIND_USER_TEXT, KIND_ASSISTANT_TEXT) and t.text.strip():
+            lines.append(f"[{t.role}]: {t.text.strip()[:600]}")
+        elif t.kind == "tool_use":
+            brief = (t.tool_input or {}).get("file_path") or (t.tool_input or {}).get("command") or ""
+            lines.append(f"[tool {t.tool_name}]: {str(brief)[:200]}")
+    return "\n".join(lines[-max_turns:])
 
 
 def _last_assistant_text(transcript_path: str | None, max_bytes: int = 400_000) -> str:
@@ -253,26 +313,36 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     tool = str(payload.get("tool_name") or "")
     if tool not in cfg.get("gate", "tools", []):
         return None
+    history = list(store.get_state(sid, "tool_history", []) or [])
     entries = store.active_entries()
-    result = run_tier0(entries, tool, payload.get("tool_input") or {}, str(cfg.cwd))
-    enforce = bool(cfg.get("gate", "enforce", False))
+    dm = _dm_for(cfg, store) if entries else None
+    llm = _advisor_for(cfg, store) if entries else None
+    embedder = _embedder_for(cfg) if entries else None
+    pipeline = GatePipeline(store, cfg, dm=dm, llm=llm, embedder=embedder, calibration=load_calibration(cfg))
+    last_advice = str(store.get_state(sid, "last_advice", "") or "")
+    slice_text = _trajectory_slice(payload.get("transcript_path"), int(cfg.get("gate", "advisor_slice_turns", 12))) if entries else ""
+    result = pipeline.evaluate(tool, payload.get("tool_input") or {}, sid, history, slice_text, last_advice)
+    # record this call in the session's tool history (for structural signals and process-order falsifiers)
+    ch = result.change
+    history.append({"tool": tool, "path": ch.path, "command": ch.command[:300], "fingerprint": ch.fingerprint(),
+                    "mutating": ch.is_mutating, "decision": result.decision})
+    store.set_state(sid, "tool_history", history[-int(cfg.get("gate", "history_max", 60)):])
+    if result.advisor and result.advisor.get("next_step"):
+        store.set_state(sid, "last_advice", result.advisor["next_step"])
     output: dict[str, Any] | None = None
-    if result.trips:
-        by_id = {e.id: e for e in entries}
-        citation = format_citation(by_id, result.trips)
-        user_backed = any(by_id[t.entry_id].provenance.source == "user" for t in result.trips if t.entry_id in by_id)
-        denies = store.get_state(sid, "denies", 0)
-        budget = int(cfg.get("gate", "deny_budget", 5))
-        if enforce and user_backed and denies < budget:
-            store.set_state(sid, "denies", denies + 1)
-            result.decision, result.reason = "deny", citation
-            output = hooklib.deny("pre_tool_use", citation)
-        else:
-            result.decision, result.reason = "advisory", citation
-            output = hooklib.additional_context("pre_tool_use", citation)
+    if result.decision == "deny":
+        output = hooklib.deny("pre_tool_use", result.reason)
+    elif result.decision == "advisory":
+        output = hooklib.additional_context("pre_tool_use", result.reason)
+    elif result.structural or (result.advisor and result.first_mutating_write and result.advisor.get("next_step")):
+        notes = [f"Epistemic monitor note: {x['detail']}" for x in result.structural]
+        if result.advisor and result.first_mutating_write and result.advisor.get("verdict") == "consistent":
+            notes.append("Epistemic monitor (first edit review): " + result.advisor["next_step"])
+        if notes:
+            output = hooklib.additional_context("pre_tool_use", "\n".join(notes))
     store.log_intervention({"kind": "gate", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
-                            "enforce": enforce, "shadow_decision": "deny" if result.trips else "allow",
-                            **result.to_dict()})
+                            "enforce": bool(cfg.get("gate", "enforce", True)),
+                            "shadow_decision": "deny" if result.conflicts else "allow", **result.to_dict()})
     return output
 
 
@@ -316,7 +386,28 @@ def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, 
     last = str(payload.get("last_assistant_message") or "")
     applied = _apply_supersede_lines(last, "agent", store, sid)
     record: dict[str, Any] = {"kind": "stop", "session_id": sid, "stop_hook_active": bool(payload.get("stop_hook_active")),
-                              "chars": len(last), "supersedes": applied, "turn_check": "deferred (Phase 2)"}
+                              "chars": len(last), "supersedes": applied}
+    output: dict[str, Any] | None = None
+    if cfg.get("gate", "stop_check", True) and not payload.get("stop_hook_active") and len(last) >= 80 \
+            and bool(cfg.get("gate", "enforce", True)):
+        active = store.active_entries()
+        if active:
+            dm = _dm_for(cfg, store)
+            if dm is not None:
+                try:
+                    from .audit import STOP_CRITERIA, STOP_INSTRUCTIONS
+                    listed = [{"id": e.id, "type": e.type, "statement": e.statement} for e in active[:25]]
+                    r = dm.noul(STOP_INSTRUCTIONS, {"entries": listed, "assistant_message": last[-12000:]}, STOP_CRITERIA)
+                    record["turn_check_p"] = round(r.p_true, 3)
+                    if r.p_true >= float(cfg.get("gate", "stop_threshold", 0.8)):
+                        reason = ("Epistemic monitor: before finishing, reconcile this reply with the recorded decisions. "
+                                  "It appears to state or rely on something that contradicts one of them. Either correct the reply, "
+                                  "or supersede the entry explicitly with `SUPERSEDE <id>: <reason>`.\n" +
+                                  "\n".join(f"- {e['id']}: {e['statement']}" for e in listed))
+                        output = hooklib.block(reason)
+                        record["blocked"] = True
+                except Exception as e:  # noqa: BLE001
+                    record["turn_check_error"] = str(e)[:200]
     if cfg.get("extraction", "on_stop", True) and len(last) >= int(cfg.get("extraction", "stop_min_chars", 200)):
         tmp = cfg.data_dir / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
@@ -324,7 +415,7 @@ def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, 
         f.write_text(last, encoding="utf-8")
         record["background_pid"] = background.spawn(cfg, ["extract-text", str(f), "--session", sid, "--role", "assistant"])
     store.log_intervention(record)
-    return None  # Phase 1 never blocks a Stop.
+    return output  # at most one block per turn (stop_hook_active guard)
 
 
 # ---------------------------------------------------------------- subagents

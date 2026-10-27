@@ -13,7 +13,7 @@ def test_defaults_and_paths(tmp_path):
     assert cfg.get("decision_model", "provider") == "typesafe"
     assert cfg.get("advisor", "model") == "claude-opus-5-5"
     assert cfg.get("extractor", "model") == "claude-haiku-5-5"
-    assert cfg.get("gate", "enforce") is False
+    assert cfg.get("gate", "enforce") is True  # Phase 2: enforcement on by default, budgeted
     assert cfg.ledger_path == tmp_path / "d" / "ledger.jsonl"
     assert cfg.memory_md_path.name == "MEMORY.md"
 
