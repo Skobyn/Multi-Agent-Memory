@@ -79,7 +79,17 @@ extractor, Opus as the advisor, OpenRouter embeddings. The advisor model needs a
 pay for it: OpenRouter pre-checks each request against prepaid credits, so with a zero balance Opus
 and Sonnet requests are refused (HTTP 402) while Haiku passes; set `EPISTEMIC_ADVISOR_MODEL` or add
 credits. Secrets come only from `TYPESAFE_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`. Full schema in
+`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Using a Claude subscription.** Set `EPISTEMIC_ADVISOR_PROVIDER=claude-cli` (and, if wanted,
+`EPISTEMIC_EXTRACTOR_PROVIDER=claude-cli`). Each call then runs as one tool-less, hook-less,
+unpersisted turn of `claude -p`, billed to whatever the CLI is signed in with. A subscription token
+is licensed for Claude Code and the Agent SDK, not for direct API calls from other programs, so this
+is the way to run the advisor on Opus without API credits. It adds a process start to each call,
+paid only on the flagged path and the first mutating write: on 2026-10-28 the gate bench with the
+advisor on Opus this way passed (held-out half: violation 0%, false-deny 0%, unflagged p95 677 ms,
+flagged p95 10.2 s against 3.5 s with Haiku over OpenRouter; 22 advisor calls, no errors;
+`docs/results/phase2_check_opus_cli_2026-10-28.json`). Full schema in
 [`docs/DESIGN.md` §12](docs/DESIGN.md#12-configuration).
 
 ## Supersession

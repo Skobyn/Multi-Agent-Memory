@@ -1,7 +1,10 @@
 """Minimal chat-completion client for the extractor and advisor roles.
 
 Providers: ``anthropic`` (Messages API), ``openrouter`` (OpenAI-compatible),
-``auto`` (Anthropic when ``ANTHROPIC_API_KEY`` is set, else OpenRouter).
+``claude-cli`` (one tool-less turn of ``claude -p``, so the call runs on whatever the
+Claude Code CLI is signed in with, a subscription included; the sanctioned way to use a
+subscription for the plugin's own model calls), ``auto`` (Anthropic when
+``ANTHROPIC_API_KEY`` is set, else OpenRouter).
 Model ids are written Anthropic-style in config (``claude-haiku-5-5``) and
 mapped to OpenRouter's ``anthropic/claude-haiku-5.5`` form when needed.
 """
@@ -11,6 +14,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -38,31 +43,77 @@ def to_openrouter_model(model: str) -> str:
     return "anthropic/" + re.sub(r"-(\d)-(\d)$", r"-\1.\2", model)
 
 
+CLI_ALIASES = {"claude-cli", "claude_cli", "cli"}
+
+
 def resolve_provider(provider: str, environ: dict[str, str] | None = None) -> str:
     env = os.environ if environ is None else environ
     if provider == "auto":
         return "anthropic" if env.get("ANTHROPIC_API_KEY") else "openrouter"
+    if provider in CLI_ALIASES:
+        return "claude-cli"
     return provider
 
 
 class LLMClient:
     def __init__(self, provider: str, model: str, timeout_ms: int = 30000, api_key: str | None = None,
-                 base_url: str | None = None, max_retries: int = 1) -> None:
+                 base_url: str | None = None, max_retries: int = 1, command: str | None = None) -> None:
         self.provider = resolve_provider(provider)
         self.model = to_openrouter_model(model) if self.provider == "openrouter" else model
         self.timeout = timeout_ms / 1000
         self.max_retries = max_retries
-        if self.provider == "anthropic":
+        self.command = command or os.environ.get("EPISTEMIC_CLAUDE_BIN") or "claude"
+        if self.provider == "claude-cli":
+            self.api_key, self.base_url = "", ""
+        elif self.provider == "anthropic":
             self.api_key = api_key if api_key is not None else os.environ.get("ANTHROPIC_API_KEY", "")
             self.base_url = (base_url or "https://api.anthropic.com").rstrip("/")
         elif self.provider == "openrouter":
             self.api_key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
             self.base_url = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
         else:
-            raise ValueError(f"unsupported LLM provider {provider!r} (anthropic | openrouter | auto)")
+            raise ValueError(f"unsupported LLM provider {provider!r} (anthropic | openrouter | claude-cli | auto)")
         self.name = f"{self.provider}:{self.model}"
 
+    def _request_cli(self, system: str, user: str) -> tuple[str, dict]:
+        """One tool-less, hook-less, unpersisted turn of `claude -p`. Runs in a scratch directory so the nested
+        session writes nothing into the project and loads none of its settings; the parent session's id is
+        dropped from the environment so the call is not recorded as part of it."""
+        scratch = os.path.join(tempfile.gettempdir(), "epistemic-monitor-cli")
+        os.makedirs(scratch, exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT")}
+        # `--setting-sources project` with a scratch cwd loads no settings and no hooks (`--bare` would, but it also
+        # skips the CLI's stored credentials in some installs, which is the whole point of this provider).
+        args = [self.command, "-p", "--no-session-persistence", "--setting-sources", "project", "--output-format", "json",
+                "--max-turns", "1", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                "--model", self.model, "--system-prompt", system]
+        try:
+            p = subprocess.run(args, input=user, capture_output=True, text=True, timeout=self.timeout, cwd=scratch, env=env)
+        except subprocess.TimeoutExpired as e:
+            raise LLMError(f"claude-cli: timed out after {self.timeout:.0f}s") from e
+        except OSError as e:
+            raise LLMError(f"claude-cli: cannot run {self.command!r}: {e}") from e
+        lines = [l for l in p.stdout.splitlines() if l.startswith("{")]
+        data: dict[str, Any] = {}
+        if lines:
+            try:
+                data = json.loads(lines[-1])
+            except ValueError:
+                data = {}
+        if p.returncode != 0 or data.get("is_error") or (data and data.get("subtype") not in (None, "success")):
+            detail = (str(data.get("result") or "") or p.stderr)[-400:]
+            raise LLMError(f"claude-cli exit {p.returncode} ({data.get('subtype', 'no json')}): {detail}")
+        text = str(data.get("result") or "")
+        usage = data.get("usage") or {}
+        data = {**data, "model": self.model,
+                "usage": {"input_tokens": int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
+                          + int(usage.get("cache_creation_input_tokens") or 0),
+                          "output_tokens": int(usage.get("output_tokens") or 0)}}
+        return text, data
+
     def _request(self, system: str, user: str, max_tokens: int, temperature: float) -> tuple[str, dict]:
+        if self.provider == "claude-cli":
+            return self._request_cli(system, user)
         headers = {"content-type": "application/json"}
         if self.provider == "anthropic":
             url = f"{self.base_url}/v1/messages"
@@ -163,4 +214,4 @@ def extract_json(text: str) -> dict | None:
 
 def make_llm(section: dict[str, Any]) -> LLMClient:
     return LLMClient(section.get("provider", "auto"), section.get("model", "claude-haiku-5-5"),
-                     int(section.get("timeout_ms", 30000)), base_url=section.get("base_url"))
+                     int(section.get("timeout_ms", 30000)), base_url=section.get("base_url"), command=section.get("command"))
