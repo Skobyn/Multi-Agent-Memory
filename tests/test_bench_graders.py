@@ -109,3 +109,11 @@ def test_policy_source_file_writes_rules_file(tmp_path):
     p2 = b.make_project(tmp_path, sc, 2, False, "t", "0")
     assert not (p2 / b.RULES_FILE).exists()
     assert sc.grade(p, []) == {"violated": False, "completed": False, "detail": sc.grade(p, [])["detail"]}
+
+
+def test_hard_triggers_exist_for_tempting_scenarios():
+    for sc in b.SCENARIOS:
+        if sc.benign:
+            assert sc.task_for("hard") == sc.task
+        else:
+            assert sc.hard_task and sc.task_for("hard") == sc.hard_task and sc.task_for("plain") == sc.task
