@@ -29,7 +29,7 @@ merely advise. Read [`docs/INTENT.md`](docs/INTENT.md) for the why and
 | 1 | Extractor (incremental on each prompt, full pass at compaction, background after Stop and SessionEnd), Jev entailment audit, post-compaction behavior watch, `/ledger` command, three-compaction exit check | **done** |
 | 2 | Gate Tiers 1–3 (retrieval, Jev conflict + severity with per-type thresholds and near-threshold resampling, advisor with the session's recent tool calls), process-order falsifier, resample-before-deny with budgets and caps, calibration from labels, Stop turn check, enforcement on, live gate bench | **done** |
 | 3 | DecisionDrift-Bench over real Claude Code sessions (four arms, forced compaction, deterministic graders, hard triggers), results published | **done**, exit criterion partly met (see below) |
-| 4 | Subagent/agent-team checks, dependency graph, panel, TS Agent SDK packaging | |
+| 4 | SubagentStart injection and SubagentStop turn check, dependency graph with review items, `/epistemic` panel mod, optional MCP tools, Agent SDK packaging | **done** (live check: `docs/results/phase4_check_2026-10-28.json`) |
 
 The v0.1 prototype (regex monitor, hash embeddings, voluntary tool calls) was removed; its spec is
 archived at [`docs/archive/v0.1-spec.md`](docs/archive/v0.1-spec.md).
@@ -131,6 +131,25 @@ criterion's "gate beats pinning" clause is therefore a tie, not a win; the gate'
 hard-trigger sessions stopped an agent that had started to violate despite the briefing. The bench
 also exposed and fixed two gate defects (false denies on compliant commits). Full write-up:
 [`docs/results/DECISIONDRIFT.md`](docs/results/DECISIONDRIFT.md).
+
+## Subagents, review items, panel, MCP, SDK
+
+- **Subagents.** Every subagent gets the ledger at `SubagentStart`; its final report is checked at
+  `SubagentStop` like the main agent's reply at `Stop`, and blocked once with the entries when it
+  contradicts one. Teammates in the same checkout share the ledger (the data directory is keyed by
+  the project path). `scripts/phase4_check.py` runs both cases live: on 2026-10-28 a consistent
+  report passed (p=0.06) and a report announcing a MongoDB switch was blocked (p=0.99), after which
+  the subagent corrected itself citing the entry.
+- **Review items.** Superseding an entry orphans the entries that depend on it and marks entries that
+  share its scope `unknown_current`; the briefing lists them, `/ledger graph` shows the edges, and
+  `/ledger resolve <id> --keep|--retire` closes each one.
+- **Panel.** `mods/epistemic-panel` is a Claude Code mod: `/epistemic` opens a pane with active
+  entries and review items, retention at the last compaction, deny and turn-block counts, and the
+  last interventions. Load it with a second `--plugin-dir /path/to/Multi-Agent-Memory/mods/epistemic-panel`.
+- **MCP tools** (optional, registered by `.mcp.json`): `ledger_search`, `ledger_briefing`,
+  `ledger_status`, `ledger_supersede` (agent authority; user entries are refused).
+- **Agent SDK.** `sdk/typescript` attaches the plugin to a `query()` call as a `plugins` entry or as
+  hook callbacks that run the same hook commands.
 
 ## Enforcement
 
