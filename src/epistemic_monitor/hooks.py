@@ -159,6 +159,65 @@ def _last_assistant_text(transcript_path: str | None, max_bytes: int = 400_000) 
     return last
 
 
+def _subagent_final_text(transcript_path: str | None, max_bytes: int = 400_000) -> str:
+    """A subagent's final report: the `SubagentHandback` message when it used that tool, else its last
+    assistant text. Subagent transcripts are all sidechain rows, so the main-transcript readers skip them."""
+    if not transcript_path:
+        return ""
+    p = Path(transcript_path)
+    if not p.exists():
+        return ""
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as fh:
+            fh.seek(max(0, size - max_bytes))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    last_text, handback = "", ""
+    for line in tail.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        for t in rows_to_turns(row):
+            if t.kind == KIND_ASSISTANT_TEXT and t.text.strip():
+                last_text = t.text
+            elif t.kind == "tool_use" and t.tool_name == "SubagentHandback":
+                inp = t.tool_input or {}
+                handback = str(inp.get("message") or inp.get("text") or inp.get("result") or
+                               " ".join(str(v) for v in inp.values()))
+    return handback or last_text
+
+
+def _turn_check(cfg: Config, store: LedgerStore, text: str, record: dict[str, Any], who: str = "reply") -> dict[str, Any] | None:
+    """Ask the decision model whether `text` contradicts an active entry; block with the entry list if so."""
+    active = store.active_entries()
+    if not active:
+        return None
+    dm = _dm_for(cfg, store)
+    if dm is None:
+        return None
+    try:
+        from .audit import STOP_CRITERIA, STOP_INSTRUCTIONS
+        listed = [{"id": e.id, "type": e.type, "statement": e.statement} for e in active[:25]]
+        r = dm.noul(STOP_INSTRUCTIONS, {"entries": listed, "assistant_message": text[-12000:]}, STOP_CRITERIA)
+        record["turn_check_p"] = round(r.p_true, 3)
+        if r.p_true >= float(cfg.get("gate", "stop_threshold", 0.8)):
+            reason = (f"Epistemic monitor: before finishing, reconcile this {who} with the recorded decisions. "
+                      "It appears to state or rely on something that contradicts one of them. Either correct it, "
+                      "or supersede the entry explicitly with `SUPERSEDE <id>: <reason>`.\n" +
+                      "\n".join(f"- {e['id']}: {e['statement']}" for e in listed))
+            record["blocked"] = True
+            return hooklib.block(reason)
+    except Exception as e:  # noqa: BLE001
+        record["turn_check_error"] = str(e)[:200]
+    return None
+
+
 def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
     """Maintain a bounded section in Claude Code's auto-memory index so the ledger
     survives even if hooks are disabled. Never creates MEMORY.md on its own."""
@@ -390,24 +449,7 @@ def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, 
     output: dict[str, Any] | None = None
     if cfg.get("gate", "stop_check", True) and not payload.get("stop_hook_active") and len(last) >= 80 \
             and bool(cfg.get("gate", "enforce", True)):
-        active = store.active_entries()
-        if active:
-            dm = _dm_for(cfg, store)
-            if dm is not None:
-                try:
-                    from .audit import STOP_CRITERIA, STOP_INSTRUCTIONS
-                    listed = [{"id": e.id, "type": e.type, "statement": e.statement} for e in active[:25]]
-                    r = dm.noul(STOP_INSTRUCTIONS, {"entries": listed, "assistant_message": last[-12000:]}, STOP_CRITERIA)
-                    record["turn_check_p"] = round(r.p_true, 3)
-                    if r.p_true >= float(cfg.get("gate", "stop_threshold", 0.8)):
-                        reason = ("Epistemic monitor: before finishing, reconcile this reply with the recorded decisions. "
-                                  "It appears to state or rely on something that contradicts one of them. Either correct the reply, "
-                                  "or supersede the entry explicitly with `SUPERSEDE <id>: <reason>`.\n" +
-                                  "\n".join(f"- {e['id']}: {e['statement']}" for e in listed))
-                        output = hooklib.block(reason)
-                        record["blocked"] = True
-                except Exception as e:  # noqa: BLE001
-                    record["turn_check_error"] = str(e)[:200]
+        output = _turn_check(cfg, store, last, record, "reply")
     if cfg.get("extraction", "on_stop", True) and len(last) >= int(cfg.get("extraction", "stop_min_chars", 200)):
         tmp = cfg.data_dir / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
@@ -430,9 +472,22 @@ def subagent_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> 
 
 
 def subagent_stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
-    store.log_intervention({"kind": "subagent_stop", "session_id": _session(payload),
-                            "agent_id": payload.get("agent_id"), "check": "deferred (Phase 4)"})
-    return None
+    """Turn check on a subagent's final report (DESIGN §4): block it once, with the entries, when it states or
+    relies on something that contradicts the ledger. SUPERSEDE lines in a subagent report carry agent authority."""
+    sid = _session(payload)
+    path = payload.get("agent_transcript_path") or payload.get("transcript_path")
+    text = str(payload.get("last_assistant_message") or "") or _subagent_final_text(path)
+    record: dict[str, Any] = {"kind": "subagent_stop", "session_id": sid, "agent_id": payload.get("agent_id"),
+                              "agent_type": payload.get("agent_type"), "chars": len(text),
+                              "stop_hook_active": bool(payload.get("stop_hook_active")),
+                              "payload_keys": sorted(k for k in payload if k != "last_assistant_message")}
+    record["supersedes"] = _apply_supersede_lines(text, "agent", store, sid) if text else []
+    output: dict[str, Any] | None = None
+    if cfg.get("gate", "subagent_check", True) and bool(cfg.get("gate", "enforce", True)) \
+            and not payload.get("stop_hook_active") and len(text) >= 80:
+        output = _turn_check(cfg, store, text, record, "subagent report")
+    store.log_intervention(record)
+    return output
 
 
 HANDLERS: dict[str, hooklib.Handler] = {
