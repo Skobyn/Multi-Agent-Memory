@@ -51,3 +51,17 @@ def test_plugin_root_config_applies_everywhere_but_yields_to_project_and_env(tmp
     assert cfg.get("advisor", "provider") == "claude-cli"
     # without CLAUDE_PLUGIN_ROOT the checkout itself is the plugin root
     assert (plugin_root({}) / "hooks" / "hooks.json").exists()
+
+
+def test_user_level_epistemic_json_sits_between_plugin_and_project(tmp_path):
+    from epistemic_monitor.config import load_config
+    root, home, proj = tmp_path / "plugin", tmp_path / "home", tmp_path / "proj"
+    root.mkdir(); home.mkdir(); (proj / ".claude").mkdir(parents=True)
+    (root / "config.json").write_text(json.dumps({"advisor": {"provider": "openrouter"}, "gate": {"deny_budget": 2}}))
+    (home / "epistemic.json").write_text(json.dumps({"advisor": {"provider": "claude-cli"}, "embeddings": {"provider": "none"}}))
+    env = {"CLAUDE_PLUGIN_ROOT": str(root), "CLAUDE_CONFIG_DIR": str(home), "EPISTEMIC_DATA_DIR": str(tmp_path / "data")}
+    cfg = load_config(cwd=proj, environ=env)
+    assert cfg.get("advisor", "provider") == "claude-cli" and cfg.get("embeddings", "provider") == "none"
+    assert cfg.get("gate", "deny_budget") == 2
+    (proj / ".claude" / "epistemic.json").write_text(json.dumps({"advisor": {"provider": "anthropic"}}))
+    assert load_config(cwd=proj, environ=env).get("advisor", "provider") == "anthropic"

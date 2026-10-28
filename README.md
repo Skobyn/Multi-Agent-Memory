@@ -36,11 +36,21 @@ archived at [`docs/archive/v0.1-spec.md`](docs/archive/v0.1-spec.md).
 
 ## Install (Claude Code)
 
-No dependencies beyond Python 3.10+.
+No dependencies beyond Python 3.10+. From the marketplace, inside Claude Code:
+
+```
+/plugin marketplace add Skobyn/Multi-Agent-Memory
+/plugin install epistemic-monitor@epistemic-monitor
+/plugin install epistemic-panel@epistemic-monitor      # optional: the /epistemic pane
+```
+
+Then restart Claude Code; `/ledger status` confirms the hooks are live. Configure it once for every
+project in `~/.claude/epistemic.json` (see Configuration), since an installed plugin lives in Claude
+Code's plugin cache and is replaced on update. Or run it straight from a checkout:
 
 ```bash
 git clone https://github.com/Skobyn/Multi-Agent-Memory
-claude --plugin-dir /path/to/Multi-Agent-Memory
+claude --plugin-dir /path/to/Multi-Agent-Memory --plugin-dir /path/to/Multi-Agent-Memory/mods/epistemic-panel
 ```
 
 The plugin registers hooks for `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`,
@@ -73,10 +83,11 @@ first three tool batches after a compaction are checked for conflicts with the p
 
 ## Configuration
 
-Four layers, each overriding the last: built-in defaults; `config.json` in the plugin directory
-(copy `config.example.json`; one file for every project, kept out of git); `.claude/epistemic.json`
-in a repo, for project defaults a team shares; `~/.claude/projects/<slug>/epistemic/config.json`
-for one project on one machine; then env overrides such as `EPISTEMIC_GATE_ENFORCE=false`.
+Layers, each overriding the last: built-in defaults; `config.json` in the plugin directory (copy
+`config.example.json`; for a checkout run with `--plugin-dir`); `~/.claude/epistemic.json`, your own
+settings for every project, the right place for a marketplace install; `.claude/epistemic.json` in a
+repo, for project defaults a team shares; `~/.claude/projects/<slug>/epistemic/config.json` for one
+project on one machine; then env overrides such as `EPISTEMIC_GATE_ENFORCE=false`.
 Defaults: TypeSafe Jev as the decision model, Haiku as the extractor, Opus as the advisor,
 OpenRouter embeddings. Keys never go in these files: the hooks read `TYPESAFE_API_KEY`,
 `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` from the environment Claude Code was started with
