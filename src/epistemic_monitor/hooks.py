@@ -257,7 +257,7 @@ def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
         return hooklib.additional_context("session_start", cfg.pinned_path.read_text(encoding="utf-8"))
     if not active:
         return None
-    orphaned = store.entries("orphaned")
+    orphaned = store.needs_review()
     text = render_briefing(active, orphaned, cfg.get("pinning", "max_entries", 25), cfg.get("pinning", "max_chars", 10000))
     return hooklib.additional_context("session_start", text)
 

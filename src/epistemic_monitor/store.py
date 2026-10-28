@@ -129,12 +129,25 @@ class LedgerStore:
                 d = new.to_dict()
                 d["supersedes"] = list(new.supersedes) + [ev["old"]]
                 self._upsert(Entry.from_dict(d))
-            # propagated invalidation (DESIGN §3): explicit dependents -> orphaned
+            # propagated invalidation (DESIGN §3): explicit dependents -> orphaned; same-scope entries with no
+            # explicit edge -> unknown_current (their premise may have moved; the user decides at the next briefing)
+            orphaned = set()
             for dep in self.dependents_of(ev["old"]):
                 if dep.status == "active":
                     d = dep.to_dict()
                     d["status"] = "orphaned"
                     self._upsert(Entry.from_dict(d))
+                    orphaned.add(dep.id)
+            if old is not None and old.scope.paths:
+                new_paths = set(new.scope.paths) if new is not None else set()
+                for e in self.active_entries():
+                    if e.id in orphaned or e.id == ev.get("new") or e.id == old.id or not e.scope.paths:
+                        continue
+                    shared = set(e.scope.paths) & set(old.scope.paths)
+                    if shared and not (shared <= new_paths and new is not None):
+                        d = e.to_dict()
+                        d["status"] = "unknown_current"
+                        self._upsert(Entry.from_dict(d))
         elif kind == "status":
             e = self.get_entry(ev["id"])
             if e is not None:
@@ -218,6 +231,37 @@ class LedgerStore:
 
     def dependents_of(self, entry_id: str) -> list[Entry]:
         return [e for e in self.entries(None) if entry_id in e.depends_on]
+
+    def needs_review(self) -> list[Entry]:
+        """Entries whose premise was superseded (orphaned) or may have moved (unknown_current)."""
+        return self.entries("orphaned") + self.entries("unknown_current")
+
+    def resolve(self, entry_id: str, keep: bool, session_id: str = "cli") -> bool:
+        """Close a review item: keep it (back to active, dependency edges to superseded entries dropped) or retire it."""
+        e = self.get_entry(entry_id)
+        if e is None or e.status not in ("orphaned", "unknown_current"):
+            return False
+        if keep:
+            live = [d for d in e.depends_on if (self.get_entry(d) or Entry(id=d, type="x", statement="")).status == "active"]
+            self._apply_event({"event": "entry_update", "id": e.id, "fields": {"depends_on": live, "status": "active",
+                                                                               "last_verified": now_iso()}})
+        else:
+            self._apply_event({"event": "status", "id": e.id, "status": "retired", "reason": "resolved at review",
+                               "session_id": session_id})
+        self.log_intervention({"kind": "review_resolved", "entry": e.id, "keep": keep, "session_id": session_id})
+        return True
+
+    def graph(self) -> dict[str, Any]:
+        """Dependency and supersession edges over every entry, for `ledger graph` and the panel."""
+        nodes, edges = [], []
+        for e in self.entries(None):
+            nodes.append({"id": e.id, "type": e.type, "status": e.status, "statement": e.statement[:120],
+                          "source": e.provenance.source})
+            for d in e.depends_on:
+                edges.append({"from": e.id, "to": d, "kind": "depends_on"})
+            for o in e.supersedes:
+                edges.append({"from": e.id, "to": o, "kind": "supersedes"})
+        return {"nodes": nodes, "edges": edges}
 
     # ------------------------------------------------------------------ search
     def search_keyword(self, query: str, top_k: int = 5) -> list[tuple[Entry, float]]:
