@@ -218,6 +218,32 @@ def _turn_check(cfg: Config, store: LedgerStore, text: str, record: dict[str, An
     return None
 
 
+def write_status(cfg: Config, session_id: str = "") -> dict[str, Any]:
+    """status.json in the data directory: the resolved component roster for the panel and `doctor`.
+    No network calls; provider names are resolved the way the factories resolve them."""
+    from . import __version__
+    from .llm import resolve_provider, to_openrouter_model
+    comps: dict[str, Any] = {}
+    dm = cfg.section("decision_model")
+    comps["decision_model"] = {"provider": dm.get("provider", "typesafe"), "model": dm.get("model", "jev-latest")}
+    for role in ("advisor", "extractor"):
+        sec = cfg.section(role)
+        prov = resolve_provider(str(sec.get("provider", "auto")))
+        model = str(sec.get("model", ""))
+        comps[role] = {"provider": prov, "model": to_openrouter_model(model) if prov == "openrouter" else model}
+    emb = cfg.section("embeddings")
+    comps["embeddings"] = {"provider": emb.get("provider", "openrouter"), "model": emb.get("model", "")}
+    status = {"version": __version__, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "session_id": session_id,
+              "components": comps, "gate": {"enforce": bool(cfg.get("gate", "enforce", True)),
+                                            "deny_budget": int(cfg.get("gate", "deny_budget", 5))}}
+    try:
+        cfg.ensure_dirs()
+        (cfg.data_dir / "status.json").write_text(json.dumps(status, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return status
+
+
 def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
     """Maintain a bounded section in Claude Code's auto-memory index so the ledger
     survives even if hooks are disabled. Never creates MEMORY.md on its own."""
@@ -253,6 +279,7 @@ def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
     pid = background.spawn(cfg, ["extract-pending"]) if pending else None
     store.log_intervention({"kind": "session_start", "source": source, "active_entries": len(active),
                             "pending_captures": len(pending), "background_pid": pid, "session_id": _session(payload)})
+    write_status(cfg, _session(payload))
     if source == "compact" and cfg.pinned_path.exists():
         return hooklib.additional_context("session_start", cfg.pinned_path.read_text(encoding="utf-8"))
     if not active:

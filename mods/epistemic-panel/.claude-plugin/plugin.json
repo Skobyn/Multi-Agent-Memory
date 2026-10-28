@@ -3,5 +3,9 @@
   "version": "0.1.0",
   "description": "A pane beside the chat showing the epistemic monitor's ledger: retention at the last compaction, review items, and the last interventions.",
   "license": "MIT",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Scott / Apex Insights"
+  },
+  "homepage": "https://github.com/Skobyn/Multi-Agent-Memory"
 }

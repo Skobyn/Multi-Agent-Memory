@@ -595,7 +595,9 @@ environment-variable paths (`> $OUT`), which resolve to `unknown`.
 
 Layers, lowest to highest: built-in defaults; `config.json` in the plugin directory
 (`CLAUDE_PLUGIN_ROOT`, or the checkout when run from it; `config.example.json` is the template, the
-file itself is git-ignored), which applies to every project; `.claude/epistemic.json` in a repo, to
+file itself is git-ignored), which applies to every project; `~/.claude/epistemic.json`, the user's
+own settings for every project, which survive plugin updates (a marketplace install lives in the
+plugin cache); `.claude/epistemic.json` in a repo, to
 pin project defaults a team shares; `~/.claude/projects/<project-slug>/epistemic/config.json` for
 one project on one machine; then environment-variable overrides (`EPISTEMIC_<SECTION>_<KEY>`, e.g.
 `EPISTEMIC_ADVISOR_MODEL`). None of the files carries secrets. Secrets come only from the

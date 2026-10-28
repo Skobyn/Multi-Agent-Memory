@@ -352,3 +352,19 @@ def test_subagent_supersede_line_is_agent_authority(cfg, store, monkeypatch, tmp
     _run("subagent_stop", {"agent_id": "a1", "agent_transcript_path": path}, cfg)
     assert _logged(cfg, "subagent_stop")[-1]["supersedes"] == [{"entry": "D-0001", "by": "agent", "ok": False}]
     assert _logged(cfg, "supersede_refused")
+
+
+def test_session_start_writes_component_status(cfg, store, monkeypatch):
+    _offline(monkeypatch)
+    monkeypatch.setenv("EPISTEMIC_ADVISOR_PROVIDER", "claude-cli")
+    monkeypatch.setenv("EPISTEMIC_EXTRACTOR_PROVIDER", "openrouter")
+    monkeypatch.setenv("EPISTEMIC_EMBEDDINGS_PROVIDER", "none")
+    make_entry(store)
+    store.close()
+    _run("session_start", {"source": "startup", "session_id": "s9"}, cfg)
+    st = json.loads((cfg.data_dir / "status.json").read_text())
+    c = st["components"]
+    assert st["session_id"] == "s9" and c["decision_model"] == {"provider": "typesafe", "model": "jev-latest"}
+    assert c["advisor"]["provider"] == "claude-cli" and c["advisor"]["model"] == "claude-opus-5-5"
+    assert c["extractor"] == {"provider": "openrouter", "model": "anthropic/claude-haiku-5.5"}
+    assert c["embeddings"]["provider"] == "none" and st["gate"]["enforce"] is True

@@ -1,0 +1,27 @@
+{
+  "name": "epistemic-monitor",
+  "owner": {"name": "Scott / Apex Insights", "url": "https://github.com/Skobyn"},
+  "metadata": {
+    "description": "The enforcement layer for agent memory: a typed decision ledger kept outside compaction, audited after every compaction, and enforced at tool-call time.",
+    "version": "2.0.0"
+  },
+  "plugins": [
+    {
+      "name": "epistemic-monitor",
+      "source": "./",
+      "description": "Decision ledger, compaction audit and re-pinning, conformance gate, Stop and subagent turn checks, /ledger command, optional MCP ledger tools.",
+      "version": "2.0.0-alpha.0",
+      "category": "productivity",
+      "keywords": ["memory", "compaction", "hooks", "decision-ledger", "epistemic-monitoring"],
+      "license": "MIT"
+    },
+    {
+      "name": "epistemic-panel",
+      "source": "./mods/epistemic-panel",
+      "description": "A pane beside the chat showing the ledger: retention at the last compaction, review items, and the last interventions (/epistemic).",
+      "version": "0.1.0",
+      "category": "productivity",
+      "license": "MIT"
+    }
+  ]
+}

@@ -349,7 +349,8 @@ class GatePipeline:
             severity = round(sv.expected, 2)
         else:
             r = self.dm.noul(CONFLICT_INSTRUCTIONS, state, CONFLICT_CRITERIA)
-        out: dict[str, Any] = {"p_conflict": round(r.p_true, 3), "samples": [round(r.p_true, 3)], "tau": self._tau(entry)}
+        out: dict[str, Any] = {"p_conflict": round(r.p_true, 3), "samples": [round(r.p_true, 3)], "tau": self._tau(entry),
+                               "input_tokens": int(getattr(r, "input_tokens", 0) or 0), "ms": int(getattr(r, "latency_ms", 0) or 0)}
         tau = out["tau"]
         if abs(r.p_true - tau) <= float(self.g.get("resample_band", 0.1)):
             for q in CONFLICT_PARAPHRASES[: int(self.g.get("resample_n", 2))]:
@@ -418,7 +419,8 @@ class GatePipeline:
             verdict = "consistent"
         ids = [i for i in (data.get("entry_ids") or []) if isinstance(i, str) and any(i == e.id for e in entries)]
         return {"verdict": verdict, "entry_ids": ids, "next_step": str(data.get("next_step", ""))[:400],
-                "reason": str(data.get("reason", ""))[:600], "model": comp.model, "ms": comp.latency_ms}
+                "reason": str(data.get("reason", ""))[:600], "model": comp.model, "ms": comp.latency_ms,
+                "input_tokens": comp.input_tokens, "output_tokens": comp.output_tokens}
 
     # ---- full pipeline
     def evaluate(self, tool: str, tool_input: dict[str, Any], session_id: str, history: list[dict[str, Any]] | None = None,
