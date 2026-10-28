@@ -485,7 +485,9 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    advisor calls returned HTTP 402 while Haiku passed. The gate degrades to its model-only path when
    the advisor errors, which is where every false deny in the failed bench runs came from. Until
    credits are added (or `ANTHROPIC_API_KEY` is set), run the advisor on Haiku
-   (`EPISTEMIC_ADVISOR_MODEL=claude-haiku-5-5`); the bench passed with it.
+   (`EPISTEMIC_ADVISOR_MODEL=claude-haiku-5-5`); the bench passed with it. **Closed 2026-10-28** by
+   the `claude-cli` provider (§12): `EPISTEMIC_ADVISOR_PROVIDER=claude-cli` runs the advisor on Opus
+   through the CLI's own sign-in; the gate bench result with it is in `docs/results/`.
 
 9. **Claude Code 2.1.311's compactor keeps user-stated rules.** Its summary quotes every user
    message verbatim ("All user messages") and lists stated rules under "Key Technical Concepts", so a
@@ -605,7 +607,7 @@ it never carries secrets. Secrets come only from the environment: `TYPESAFE_API_
     "max_question_tokens": 32000,      // stay under the per-question default; no long-context header
     "fallback": "llm"                  // llm | skip  (what Tier 2 does when the provider is unavailable)
   },
-  "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},   // auto = anthropic if ANTHROPIC_API_KEY else openrouter
+  "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},   // auto = anthropic if ANTHROPIC_API_KEY else openrouter; claude-cli = through `claude -p`
   "advisor":   {"provider": "auto", "model": "claude-opus-5-5",  "timeout_ms": 20000},
   "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},   // openrouter | local | none
   "gate": {
@@ -626,7 +628,7 @@ Providers:
 | Role | `provider` values | Notes |
 |---|---|---|
 | `decision_model` | `typesafe` (initial), `llm` | Both implement the `DecisionModel` interface in §8.2 and log the same fields, so calibration (§8.1) is per provider and switching providers invalidates the stored τ until refit. |
-| `extractor`, `advisor` | `anthropic`, `openrouter`, `auto` | `auto` picks Anthropic when `ANTHROPIC_API_KEY` is set, else OpenRouter; Anthropic-style model ids are mapped to OpenRouter's (`claude-haiku-5-5` → `anthropic/claude-haiku-5.5`). The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
+| `extractor`, `advisor` | `anthropic`, `openrouter`, `claude-cli`, `auto` | `auto` picks Anthropic when `ANTHROPIC_API_KEY` is set, else OpenRouter; Anthropic-style model ids are mapped to OpenRouter's (`claude-haiku-5-5` → `anthropic/claude-haiku-5.5`). `claude-cli` runs the call as one tool-less, hook-less, unpersisted turn of `claude -p` in a scratch directory, so it is billed to whatever the CLI is signed in with, a Claude subscription included; that is the sanctioned way to use a subscription for the plugin's own model calls (a subscription token must not be sent to the Messages API directly). It costs a process start plus the model call (about 5 s for Opus), which only the flagged path and first mutating write pay. `EPISTEMIC_CLAUDE_BIN` names the executable. The advisor must be at least as strong as the session's executor model; the plugin warns at `SessionStart` when it is not. |
 | `embeddings` | `openrouter`, `local`, `none` | `local` = sentence-transformers (`BAAI/bge-small-en-v1.5`) for offline use; `none` disables vector retrieval (scope and keyword only). Anthropic has no first-party embeddings endpoint, so an `anthropic` value is not offered. Switching models requires a re-embed of the ledger, which the plugin runs lazily. |
 
 Calibration state (`calibration.json`) is keyed by `(role, provider, model)` so a provider swap
