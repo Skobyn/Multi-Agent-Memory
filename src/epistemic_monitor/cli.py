@@ -299,6 +299,9 @@ def main(argv: list[str] | None = None) -> int:
         return extract_pending(rest)
     if cmd == "extract-text":
         return extract_text(rest)
+    if cmd == "mcp":
+        from .mcp_server import serve
+        return serve()
     if cmd == "hook":
         if not rest or rest[0] not in HANDLERS:
             sys.stderr.write(f"unknown hook event; expected one of {', '.join(HANDLERS)}\n")
