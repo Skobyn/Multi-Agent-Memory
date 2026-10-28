@@ -24,3 +24,6 @@ package-lock.json
 # Plugin-generated session traces (apex observability / contracts plugins)
 .claude/traces/
 .claude/contracts-reliability/
+
+# Your plugin-wide configuration (copy config.example.json); kept out of the repo
+/config.json

@@ -1,6 +1,7 @@
 """Configuration (DESIGN.md §12) and on-disk layout (DESIGN.md §2).
 
-Precedence, lowest to highest: built-in defaults, the repo's
+Precedence, lowest to highest: built-in defaults, ``config.json`` in the
+plugin directory (one file for every project), the repo's
 ``.claude/epistemic.json``, the per-project ``config.json`` in the data
 directory, then ``EPISTEMIC_<SECTION>_<KEY>`` environment variables.
 Secrets never live in config files; they come from ``TYPESAFE_API_KEY``,
@@ -195,6 +196,13 @@ class Config:
         self.transcripts_dir.mkdir(parents=True, exist_ok=True)
 
 
+def plugin_root(environ: dict[str, str] | None = None) -> Path:
+    """The plugin directory: CLAUDE_PLUGIN_ROOT when Claude Code runs a hook, else this checkout."""
+    env = os.environ if environ is None else environ
+    root = env.get("CLAUDE_PLUGIN_ROOT")
+    return Path(root).expanduser() if root else Path(__file__).resolve().parents[2]
+
+
 def load_config(cwd: str | os.PathLike[str] | None = None,
                 environ: dict[str, str] | None = None) -> Config:
     env = dict(os.environ if environ is None else environ)
@@ -203,6 +211,7 @@ def load_config(cwd: str | os.PathLike[str] | None = None,
         Path(env[_ENV_PREFIX + "DATA_DIR"]).expanduser() if _ENV_PREFIX + "DATA_DIR" in env
         else claude_config_dir() / "projects" / project_slug(cwd_path) / "epistemic")
     values = copy.deepcopy(DEFAULTS)
+    values = _deep_merge(values, _load_json_file(plugin_root(env) / "config.json"))
     values = _deep_merge(values, _load_json_file(cwd_path / ".claude" / "epistemic.json"))
     values = _deep_merge(values, _load_json_file(data_dir / "config.json"))
     values = _deep_merge(values, _env_overrides(env))

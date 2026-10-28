@@ -31,3 +31,23 @@ def test_file_and_env_precedence(tmp_path):
     assert cfg.get("gate", "enforce") is True
     assert cfg.get("decision_model", "max_rps") == 5
     assert cfg.get("decision_model", "model") == DEFAULTS["decision_model"]["model"]
+
+
+def test_plugin_root_config_applies_everywhere_but_yields_to_project_and_env(tmp_path, monkeypatch):
+    from epistemic_monitor.config import load_config, plugin_root
+    root = tmp_path / "plugin"
+    root.mkdir()
+    (root / "config.json").write_text(json.dumps({"advisor": {"provider": "claude-cli", "model": "claude-opus-5-5"},
+                                                   "gate": {"deny_budget": 3}}))
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    env = {"CLAUDE_PLUGIN_ROOT": str(root), "EPISTEMIC_DATA_DIR": str(tmp_path / "data")}
+    assert plugin_root(env) == root
+    cfg = load_config(cwd=proj, environ=env)
+    assert cfg.get("advisor", "provider") == "claude-cli" and cfg.get("gate", "deny_budget") == 3
+    (proj / ".claude" / "epistemic.json").write_text(json.dumps({"gate": {"deny_budget": 4}}))
+    cfg = load_config(cwd=proj, environ={**env, "EPISTEMIC_ADVISOR_MODEL": "claude-sonnet-5-5"})
+    assert cfg.get("gate", "deny_budget") == 4 and cfg.get("advisor", "model") == "claude-sonnet-5-5"
+    assert cfg.get("advisor", "provider") == "claude-cli"
+    # without CLAUDE_PLUGIN_ROOT the checkout itself is the plugin root
+    assert (plugin_root({}) / "hooks" / "hooks.json").exists()

@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to config.json in this plugin directory; it applies to every project. Project files (.claude/epistemic.json) and EPISTEMIC_* variables override it. No secrets here: keys come from TYPESAFE_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY in the environment.",
+  "decision_model": {"provider": "typesafe", "model": "jev-latest", "max_rps": 20, "timeout_ms": 1500, "fallback": "llm"},
+  "advisor": {"provider": "claude-cli", "model": "claude-opus-5-5", "timeout_ms": 20000},
+  "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},
+  "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},
+  "gate": {"enforce": true, "deny_budget": 5}
+}
