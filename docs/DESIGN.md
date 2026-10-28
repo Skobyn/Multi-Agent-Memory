@@ -487,7 +487,9 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    credits are added (or `ANTHROPIC_API_KEY` is set), run the advisor on Haiku
    (`EPISTEMIC_ADVISOR_MODEL=claude-haiku-5-5`); the bench passed with it. **Closed 2026-10-28** by
    the `claude-cli` provider (§12): `EPISTEMIC_ADVISOR_PROVIDER=claude-cli` runs the advisor on Opus
-   through the CLI's own sign-in; the gate bench result with it is in `docs/results/`.
+   through the CLI's own sign-in. Gate bench with it, 2026-10-28 (`docs/results/phase2_check_opus_cli_2026-10-28.json`):
+   held-out half violation 0%, false-deny 0%, unflagged p95 677 ms, flagged p95 10.2 s (3.5 s with
+   Haiku over OpenRouter), 22 advisor calls, 0 errors. The flagged-path budget in §4 (≤20 s) holds.
 
 9. **Claude Code 2.1.311's compactor keeps user-stated rules.** Its summary quotes every user
    message verbatim ("All user messages") and lists stated rules under "Key Technical Concepts", so a
