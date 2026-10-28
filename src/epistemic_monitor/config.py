@@ -58,6 +58,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "first_write_advisor": True,
         "stop_check": True,
         "stop_threshold": 0.8,
+        "subagent_check": True,
         "advisor_slice_turns": 12,
         "history_max": 60,
     },

@@ -51,8 +51,10 @@ def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_ent
 def render_briefing(entries: list[Entry], orphaned: list[Entry], max_entries: int, max_chars: int) -> str:
     text = render_pinned(entries, None, max_entries, max_chars - 600, title="Session briefing: active decisions")
     if orphaned:
-        lines = ["", "### Needs review: decisions whose premise was superseded"]
+        lines = ["", "### Needs review: decisions whose premise was superseded",
+                 "Confirm each with `/ledger resolve <id> --keep` or retire it with `/ledger resolve <id> --retire`."]
         for e in orphaned[:10]:
-            lines.append(f"- {e.id}: {e.statement} (depends on a superseded entry)")
+            why = "depends on a superseded entry" if e.status == "orphaned" else "shares scope with a superseded entry"
+            lines.append(f"- {e.id}: {e.statement} ({why})")
         text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
     return text

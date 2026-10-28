@@ -74,3 +74,34 @@ def test_watermark_and_state(store):
     assert store.get_watermark("s1") == "u-123"
     store.set_state("s1", "denies", 3)
     assert store.get_state("s1", "denies", 0) == 3
+
+
+def test_supersession_marks_same_scope_entries_unknown_current_and_resolve(cfg, store):
+    old = make_entry(store, statement="Use PostgreSQL as the primary database.", scope={"paths": ["src/db/*"]})
+    dep = make_entry(store, statement="Connection pooling uses pgbouncer.", depends_on=[old.id])
+    same = make_entry(store, statement="Migrations live in src/db/migrations.", scope={"paths": ["src/db/*"]})
+    other = make_entry(store, statement="Front-end tests use Vitest.", scope={"paths": ["web/*"]})
+    glob = make_entry(store, statement="Run pytest before every commit.")
+    assert store.supersede(old.id, None, "moving to CockroachDB", by="user")
+    assert store.get_entry(dep.id).status == "orphaned"
+    assert store.get_entry(same.id).status == "unknown_current"
+    assert store.get_entry(other.id).status == "active" and store.get_entry(glob.id).status == "active"
+    assert {e.id for e in store.needs_review()} == {dep.id, same.id}
+    g = store.graph()
+    assert {"from": dep.id, "to": old.id, "kind": "depends_on"} in g["edges"]
+    # resolve: keep drops the dead edge and reactivates; retire closes it
+    assert store.resolve(dep.id, keep=True) and store.get_entry(dep.id).status == "active" and store.get_entry(dep.id).depends_on == []
+    assert store.resolve(same.id, keep=False) and store.get_entry(same.id).status == "retired"
+    assert store.resolve(other.id, keep=True) is False
+    assert store.needs_review() == []
+    # the index rebuilds to the same state from the event log
+    store.rebuild_from_events()
+    assert store.get_entry(dep.id).status == "active" and store.get_entry(same.id).status == "retired"
+
+
+def test_supersession_with_replacement_in_same_scope_keeps_siblings(cfg, store):
+    old = make_entry(store, statement="Use PostgreSQL.", scope={"paths": ["src/db/*"]})
+    same = make_entry(store, statement="Migrations live in src/db/migrations.", scope={"paths": ["src/db/*"]})
+    new = make_entry(store, statement="Use CockroachDB.", scope={"paths": ["src/db/*"]})
+    assert store.supersede(old.id, new.id, "scale", by="user")
+    assert store.get_entry(same.id).status == "active"   # the replacement covers the same scope

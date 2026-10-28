@@ -298,3 +298,57 @@ def test_dispatcher_subprocess_smoke(cfg):
     assert "refused" in p.stdout
     hooks_json = json.load(open(ROOT / "hooks" / "hooks.json"))["hooks"]
     assert {"SessionStart", "PreCompact", "PostCompact", "PreToolUse", "Stop", "SessionEnd", "PostToolBatch"} <= set(hooks_json)
+
+
+def _subagent_transcript(tmp_path, final_text, via_handback=True):
+    rows = [{"type": "user", "isSidechain": True, "agentId": "a1", "uuid": "u1", "parentUuid": None,
+             "message": {"role": "user", "content": "Do the task."}},
+            {"type": "assistant", "isSidechain": True, "agentId": "a1", "uuid": "a1", "parentUuid": "u1",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "Working on it."}]}}]
+    if via_handback:
+        rows.append({"type": "assistant", "isSidechain": True, "agentId": "a1", "uuid": "a2", "parentUuid": "a1",
+                     "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "SubagentHandback",
+                                                                    "input": {"message": final_text}}]}})
+    else:
+        rows.append({"type": "assistant", "isSidechain": True, "agentId": "a1", "uuid": "a2", "parentUuid": "a1",
+                     "message": {"role": "assistant", "content": [{"type": "text", "text": final_text}]}})
+    p = tmp_path / "agent-a1.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return str(p)
+
+
+def test_subagent_stop_blocks_contradicting_report_once(cfg, store, monkeypatch, tmp_path):
+    _offline(monkeypatch, dm=FakeDM(default=0.95))
+    make_entry(store)
+    store.close()
+    msg = "Result: I migrated the persistence layer to MongoDB; the Postgres engine is gone. " * 3
+    path = _subagent_transcript(tmp_path, msg)
+    out = _run("subagent_stop", {"agent_id": "a1", "agent_type": "general-purpose", "agent_transcript_path": path,
+                                 "stop_hook_active": False}, cfg)
+    assert out["decision"] == "block" and "D-0001" in out["reason"] and "subagent report" in out["reason"]
+    rec = _logged(cfg, "subagent_stop")[-1]
+    assert rec["blocked"] is True and rec["chars"] == len(msg) and rec["turn_check_p"] == 0.95
+    assert _run("subagent_stop", {"agent_id": "a1", "agent_transcript_path": path, "stop_hook_active": True}, cfg) is None
+
+
+def test_subagent_stop_passes_consistent_report_and_reads_plain_text(cfg, store, monkeypatch, tmp_path):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
+    make_entry(store)
+    store.close()
+    path = _subagent_transcript(tmp_path, "Done: added the pool_size parameter to the Postgres engine factory. " * 3, via_handback=False)
+    assert _run("subagent_stop", {"agent_id": "a1", "agent_transcript_path": path}, cfg) is None
+    rec = _logged(cfg, "subagent_stop")[-1]
+    assert rec["turn_check_p"] == 0.05 and not rec.get("blocked") and rec["chars"] > 80
+    # no transcript, no text: silent
+    assert _run("subagent_stop", {"agent_id": "a2"}, cfg) is None
+    assert _logged(cfg, "subagent_stop")[-1]["chars"] == 0
+
+
+def test_subagent_supersede_line_is_agent_authority(cfg, store, monkeypatch, tmp_path):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
+    make_entry(store)   # user provenance: an agent SUPERSEDE is refused
+    store.close()
+    path = _subagent_transcript(tmp_path, "Finished. SUPERSEDE D-0001: Mongo is simpler for this. " * 3)
+    _run("subagent_stop", {"agent_id": "a1", "agent_transcript_path": path}, cfg)
+    assert _logged(cfg, "subagent_stop")[-1]["supersedes"] == [{"entry": "D-0001", "by": "agent", "ok": False}]
+    assert _logged(cfg, "supersede_refused")

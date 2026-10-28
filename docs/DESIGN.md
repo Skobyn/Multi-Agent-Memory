@@ -137,7 +137,7 @@ dependency) or `unknown_current` (same scope, no explicit edge), and are surface
 | `Stop` | `turn_check.py` | `last_assistant_message`, `stop_hook_active` | `decision: "block"` + `reason` at most once per turn; else incremental extraction | ≤20 s |
 | `SessionEnd` | `archive_and_extract.py` | `transcript_path` | capture + extraction | ≤1.5 s default; raise `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` or do capture only |
 | `SubagentStart` | `briefing.py --compact` | ledger | `additionalContext` (≤3,000 chars) | ≤2 s |
-| `SubagentStop` | `turn_check.py --subagent` | `agent_transcript_path` | `decision: "block"` + reason if the subagent's result contradicts a user-provenance entry | ≤20 s |
+| `SubagentStop` | `turn_check.py --subagent` | `agent_transcript_path` (verified in 2.1.312: the payload also carries `agent_id`, `agent_type`, `transcript_path`, `stop_hook_active`); the report is the `SubagentHandback` message, else the last assistant text | `decision: "block"` + reason if the subagent's result contradicts an entry; `SUPERSEDE` lines carry agent authority | ≤20 s |
 
 Notes verified from docs: exit code 2 blocks on blockable events regardless of JSON;
 `PreCompact` cannot inject context (hence `SessionStart[compact]`); `PostCompact` cannot edit
@@ -446,7 +446,7 @@ task success (does the tempting task still complete, PRE/POST where applicable);
 | 1 (week 1) | Extractor (incremental + full pass), ledger index with anchors, `PreCompact`/`SessionEnd` capture, `PostCompact` anchor + entailment audit, behavior watch, `SessionStart` pinning + briefing, `MEMORY.md` mirror, `/ledger` command | Retention ≥95% and extraction recall ≥90% on a 3-compaction scripted session (`scripts/phase1_check.py`); briefing ≤10 KB; zero main-agent tool calls required. **Met 2026-10-27:** recall 100%, retained 100% at each compaction; summary alone kept 0/12 at the third. |
 | 2 (weeks 2–3) | Gate Tiers 0–3 incl. structural signals and first-mutating-write advisor, resample flow, provenance force, harm budget + shadow mode, intervention log, `Stop` turn check, behavior watch, decision-model adapter + calibration | On the bench: violation rate ≤5% with false-deny ≤2%; unflagged p95 ≤800 ms. **Met 2026-10-27** on the held-out half of `scripts/phase2_check.py` (36 labeled tool calls, 12 user-backed entries): violation 0%, false-deny 0%, unflagged p95 560 ms, advisor on Haiku (Opus/Sonnet refused by OpenRouter's credit pre-check). The post-compaction arm belongs to Phase 3's bench. |
 | 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success. **Run 2026-10-28**, see `docs/results/DECISIONDRIFT.md` for the outcome and §11 items 9–10 for what the bench found in the stack and in the gate. |
-| 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions |
+| 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions. **Met 2026-10-28:** `scripts/phase4_check.py` (two live sessions with a subagent) passed all four checks, `docs/results/phase4_check_2026-10-28.json`; the panel mod validates, type-checks and passes `claude plugin test`. |
 
 ## 11. Open questions and recorded decisions
 

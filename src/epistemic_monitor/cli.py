@@ -83,6 +83,10 @@ def ledger(argv: list[str]) -> int:
     s_sup = sub.add_parser("supersede"); s_sup.add_argument("id"); s_sup.add_argument("--reason", required=True)
     s_sup.add_argument("--by", choices=("user", "agent"), default="agent")
     sub.add_parser("pin")
+    sub.add_parser("graph", help="dependency and supersession edges, with the entries that need review")
+    s_res = sub.add_parser("resolve", help="close a review item (orphaned or unknown_current)")
+    s_res.add_argument("id"); g = s_res.add_mutually_exclusive_group(required=True)
+    g.add_argument("--keep", action="store_true"); g.add_argument("--retire", action="store_true")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
     s_rev = sub.add_parser("review", help="list recent gate decisions that involved the decision model, for labeling")
@@ -124,6 +128,21 @@ def ledger(argv: list[str]) -> int:
                   f"refused: {args.id.upper()} is a user decision; only the user may supersede it (use --by user if the user asked)")
         elif args.cmd == "pin":
             print(write_pinned(cfg, store))
+        elif args.cmd == "graph":
+            g = store.graph()
+            by_id = {n["id"]: n for n in g["nodes"]}
+            for n in g["nodes"]:
+                print(f"{n['id']}  [{n['type']}, {n['source']}, {n['status']}]  {n['statement']}")
+            for ed in g["edges"]:
+                print(f"    {ed['from']} --{ed['kind']}--> {ed['to']}  ({by_id.get(ed['to'], {}).get('status', '?')})")
+            review = store.needs_review()
+            print(f"\nneeds review: {len(review)}" + ("" if not review else "  (resolve with `ledger resolve <id> --keep|--retire`)"))
+            for e in review:
+                print(f"  {e.id}  [{e.status}]  {e.statement}")
+        elif args.cmd == "resolve":
+            ok = store.resolve(args.id.upper(), keep=bool(args.keep))
+            write_pinned(cfg, store)
+            print(("kept " if args.keep else "retired ") + args.id.upper() if ok else f"{args.id.upper()} is not under review")
         elif args.cmd == "interventions":
             for r in store.recent_interventions(args.n):
                 print(json.dumps(r, ensure_ascii=False)[:400])
@@ -280,6 +299,9 @@ def main(argv: list[str] | None = None) -> int:
         return extract_pending(rest)
     if cmd == "extract-text":
         return extract_text(rest)
+    if cmd == "mcp":
+        from .mcp_server import serve
+        return serve()
     if cmd == "hook":
         if not rest or rest[0] not in HANDLERS:
             sys.stderr.write(f"unknown hook event; expected one of {', '.join(HANDLERS)}\n")
