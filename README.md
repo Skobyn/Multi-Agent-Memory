@@ -73,9 +73,16 @@ first three tool batches after a compaction are checked for conflicts with the p
 
 ## Configuration
 
-One JSON file, `~/.claude/projects/<slug>/epistemic/config.json`, with env overrides such as
-`EPISTEMIC_GATE_ENFORCE=false`. Defaults: TypeSafe Jev as the decision model, Haiku as the
-extractor, Opus as the advisor, OpenRouter embeddings. The advisor model needs an account that can
+Four layers, each overriding the last: built-in defaults; `config.json` in the plugin directory
+(copy `config.example.json`; one file for every project, kept out of git); `.claude/epistemic.json`
+in a repo, for project defaults a team shares; `~/.claude/projects/<slug>/epistemic/config.json`
+for one project on one machine; then env overrides such as `EPISTEMIC_GATE_ENFORCE=false`.
+Defaults: TypeSafe Jev as the decision model, Haiku as the extractor, Opus as the advisor,
+OpenRouter embeddings. Keys never go in these files: the hooks read `TYPESAFE_API_KEY`,
+`ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` from the environment Claude Code was started with
+(on macOS, export them in your shell profile from Keychain with
+`security find-generic-password -s <item> -w`, and start `claude` from that shell). Check the
+resolved settings with `/ledger status`. The advisor model needs an account that can
 pay for it: OpenRouter pre-checks each request against prepaid credits, so with a zero balance Opus
 and Sonnet requests are refused (HTTP 402) while Haiku passes; set `EPISTEMIC_ADVISOR_MODEL` or add
 credits. Secrets come only from `TYPESAFE_API_KEY`,

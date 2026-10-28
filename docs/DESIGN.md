@@ -593,11 +593,14 @@ environment-variable paths (`> $OUT`), which resolve to `unknown`.
 
 ## 12. Configuration
 
-One JSON file, `~/.claude/projects/<project-slug>/epistemic/config.json`, with plugin defaults
-underneath and environment-variable overrides on top (`EPISTEMIC_<SECTION>_<KEY>`, e.g.
-`EPISTEMIC_ADVISOR_MODEL`). A repo may ship `.claude/epistemic.json` to pin project defaults;
-it never carries secrets. Secrets come only from the environment: `TYPESAFE_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
+Layers, lowest to highest: built-in defaults; `config.json` in the plugin directory
+(`CLAUDE_PLUGIN_ROOT`, or the checkout when run from it; `config.example.json` is the template, the
+file itself is git-ignored), which applies to every project; `.claude/epistemic.json` in a repo, to
+pin project defaults a team shares; `~/.claude/projects/<project-slug>/epistemic/config.json` for
+one project on one machine; then environment-variable overrides (`EPISTEMIC_<SECTION>_<KEY>`, e.g.
+`EPISTEMIC_ADVISOR_MODEL`). None of the files carries secrets. Secrets come only from the
+environment of the Claude Code process: `TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENROUTER_API_KEY` (from a keychain via the shell profile, for example).
 
 ```jsonc
 {
