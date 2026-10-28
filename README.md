@@ -44,7 +44,9 @@ No dependencies beyond Python 3.10+. From the marketplace, inside Claude Code:
 /plugin install epistemic-panel@epistemic-monitor      # optional: the /epistemic pane
 ```
 
-Then restart Claude Code; `/ledger status` confirms the hooks are live. Configure it once for every
+Then restart Claude Code; `/ledger doctor` makes one real call per component (decision model,
+advisor, extractor, embeddings) and reports PASS or FAIL for each, and `/ledger status` shows the
+resolved configuration. Configure it once for every
 project in `~/.claude/epistemic.json` (see Configuration), since an installed plugin lives in Claude
 Code's plugin cache and is replaced on update. Or run it straight from a checkout:
 

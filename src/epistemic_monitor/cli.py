@@ -89,6 +89,7 @@ def ledger(argv: list[str]) -> int:
     g.add_argument("--keep", action="store_true"); g.add_argument("--retire", action="store_true")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
+    sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
     s_rev = sub.add_parser("review", help="list recent gate decisions that involved the decision model, for labeling")
     s_rev.add_argument("n", nargs="?", type=int, default=20)
     s_lab = sub.add_parser("label", help="record whether a flagged tool call really conflicted")
@@ -148,6 +149,9 @@ def ledger(argv: list[str]) -> int:
                 print(json.dumps(r, ensure_ascii=False)[:400])
         elif args.cmd == "status":
             print(json.dumps(_status_dict(cfg, store), indent=2))
+        elif args.cmd == "doctor":
+            from .doctor import main as doctor_main
+            return doctor_main([])
         elif args.cmd == "review":
             gates = [r for r in store.recent_interventions(2000) if r.get("kind") == "gate" and r.get("scores")][-args.n:]
             if not gates:
@@ -302,6 +306,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "mcp":
         from .mcp_server import serve
         return serve()
+    if cmd == "doctor":
+        from .doctor import main as doctor_main
+        return doctor_main(rest)
     if cmd == "hook":
         if not rest or rest[0] not in HANDLERS:
             sys.stderr.write(f"unknown hook event; expected one of {', '.join(HANDLERS)}\n")
