@@ -144,3 +144,34 @@ def test_advisor_cooldown(cfg, store):
     assert len(llm.calls) == 1
     pipe.evaluate("Edit", _edit("import pymongo"), "s1", history=[prior] * 6)
     assert len(llm.calls) == 2
+
+
+def test_satisfied_process_falsifier_clears_entry_without_model(cfg, store):
+    # Seen on DecisionDrift-Bench: pytest had just run, the falsifier did not trip, yet the decision model scored
+    # `git commit` as a conflict and the gate denied. The falsifier is the entry's own definition of compliance.
+    e = make_entry(store, type="process", statement="Always run the test suite with pytest before every git commit.",
+                   scope={"tools": ["Bash"]},
+                   falsifiers=[{"kind": "command_requires_prior", "pattern": r"\bgit\s+commit\b", "prior_pattern": r"\bpytest\b", "window": 30}])
+    dm = FakeDM(default=0.97)
+    pipe = GatePipeline(store, cfg, dm=dm, llm=None)
+    res = pipe.evaluate("Bash", {"command": "git add -A && git commit -m wip"}, "s1",
+                        history=[{"tool": "Bash", "command": "pytest -q"}])
+    assert res.cleared == [e.id] and res.candidates == [] and dm.calls == [] and res.decision == "allow"
+    # without the prior step the falsifier trips and the model is still not consulted
+    res = pipe.evaluate("Bash", {"command": "git commit -m wip"}, "s2", history=[{"tool": "Bash", "command": "ls"}])
+    assert res.cleared == [] and res.decision == "deny" and dm.calls == []
+
+
+def test_first_write_briefing_does_not_start_advisor_cooldown(cfg, store):
+    e = _pg(store)
+    llm = FakeLLM([{"verdict": "consistent", "entry_ids": [], "next_step": "ok", "reason": "fine"},
+                   {"verdict": "conflict", "entry_ids": [e.id], "next_step": "n", "reason": "r"}])
+    dm = FakeDM(default=0.1)   # the first write is not flagged, so the advisor call is the briefing, not a review
+    pipe = GatePipeline(store, cfg, dm=dm, llm=llm)
+    first = pipe.evaluate("Write", {"file_path": "src/new_module.py", "content": "x = 1"}, "s1", history=[])
+    assert first.first_mutating_write and not first.flagged and len(llm.calls) == 1
+    dm.default = 0.95
+    prior = {"tool": "Write", "path": "src/new_module.py", "mutating": True}
+    res = pipe.evaluate("Edit", _edit("import pymongo"), "s1", history=[prior])
+    assert len(llm.calls) == 2 and res.advisor["verdict"] == "conflict" and res.decision == "deny"
+    assert not any("cooldown" in n for n in res.notes)

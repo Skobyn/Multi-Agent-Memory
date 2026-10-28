@@ -90,6 +90,7 @@ class GateResult:
     trips: list[Trip] = field(default_factory=list)
     classification: Classification | None = None
     scoped_entries: list[str] = field(default_factory=list)
+    cleared: list[str] = field(default_factory=list)   # entries whose deterministic process check passed; never model-scored
     tier_reached: int = 0
     decision: str = "allow"  # allow | deny | advisory
     reason: str = ""
@@ -113,7 +114,7 @@ class GateResult:
             "tool": self.change.tool, "path": self.change.path, "is_new_file": self.change.is_new_file,
             "trips": [t.to_dict() for t in self.trips],
             "bash": self.classification.to_dict() if self.classification else None,
-            "scoped_entries": self.scoped_entries, "tier_reached": self.tier_reached,
+            "scoped_entries": self.scoped_entries, "cleared": self.cleared, "tier_reached": self.tier_reached,
             "decision": self.decision, "reason": self.reason[:2000], "structural": self.structural,
             "first_mutating_write": self.first_mutating_write, "candidates": self.candidates,
             "scores": self.scores, "flagged": self.flagged, "advisor": self.advisor, "conflicts": self.conflicts,
@@ -202,6 +203,27 @@ def evaluate_falsifiers(entry: Entry, change: Change, cwd: str, history: list[di
     return trips
 
 
+def satisfied_process_falsifier(entry: Entry, change: Change, history: list[dict[str, Any]] | None = None) -> bool:
+    """True when a `command_requires_prior` falsifier applies to this command and its prior step is in the history.
+    That is the entry's own machine-checkable definition of compliance, so the decision model is not asked
+    (it sees only the command, not the history, and would score `git commit` against "run tests before every
+    commit" as a conflict even though the tests just ran)."""
+    history = history or []
+    for f in entry.falsifiers:
+        if f.get("kind") != "command_requires_prior" or change.tool != "Bash":
+            continue
+        try:
+            if not re.search(f["pattern"], change.command):
+                continue
+            window = int(f.get("window", 20))
+            recent = [h for h in history[-window:] if h.get("tool") == "Bash"]
+            if any(re.search(f["prior_pattern"], str(h.get("command", ""))) for h in recent):
+                return True
+        except (re.error, KeyError):
+            continue
+    return False
+
+
 def structural_signals(change: Change, history: list[dict[str, Any]], cycle_window: int = 10,
                        stagnation_run: int = 7) -> list[dict[str, Any]]:
     """LivePlan-style drift signals from the session's own tool history. Advisory only."""
@@ -238,7 +260,10 @@ def run_tier0(entries: list[Entry], tool: str, tool_input: dict[str, Any], cwd: 
         if e.status != "active" or not entry_in_scope(e, change):
             continue
         result.scoped_entries.append(e.id)
-        result.trips.extend(evaluate_falsifiers(e, change, cwd, history))
+        trips = evaluate_falsifiers(e, change, cwd, history)
+        result.trips.extend(trips)
+        if not trips and satisfied_process_falsifier(e, change, history):
+            result.cleared.append(e.id)
     result.structural = structural_signals(change, history, cycle_window, stagnation_run)
     result.first_mutating_write = is_first_mutating_write(change, history)
     result.tier_reached = 0
@@ -412,7 +437,7 @@ class GatePipeline:
 
         # Tier 1
         t1 = time.monotonic()
-        candidates = self.retrieve(entries, res.change, exclude=tripped)
+        candidates = self.retrieve(entries, res.change, exclude=tripped | set(res.cleared))
         res.candidates = [e.id for e in candidates]
         res.latency_ms["tier1"] = int((time.monotonic() - t1) * 1000)
         res.tier_reached = 1
@@ -451,9 +476,10 @@ class GatePipeline:
             res.advisor = self.advise(to_advise, res.change, trajectory_slice, last_advice, mode, history)
             res.latency_ms["tier3"] = int((time.monotonic() - t3) * 1000)
             res.tier_reached = 3
-            for e in to_advise:
-                last_calls[e.id] = step
-            self.store.set_state(session_id, "advisor_last_call", last_calls)
+            if mode == "flagged":   # the first-write briefing is not a conflict review and must not put entries on cooldown
+                for e in to_advise:
+                    last_calls[e.id] = step
+                self.store.set_state(session_id, "advisor_last_call", last_calls)
 
         # Model-based conflicts
         min_p = float(self.g.get("enforce_uncalibrated_min_p", 0.9))
