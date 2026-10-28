@@ -407,15 +407,30 @@ inventing it.
   add a seeded decision (e.g. "keep the public API of module X") and grade violation from the
   diff.
 
-**Execution:** Agent SDK (TypeScript) so `PostCompact`, `PostToolBatch`, and
-`SDKCompactBoundaryMessage` are available; compaction forced with a small
-`CLAUDE_CODE_AUTO_COMPACT_WINDOW` or `/compact`. Temperature and seeds fixed where the API allows;
-≥5 runs per cell; per-run JSON kept as v0.1 did.
+**Execution (as built, `scripts/decisiondrift_bench.py`):** every cell is a real `claude -p`
+session in a throwaway project, isolated from user settings and MCP servers, with the plugin
+loaded through `--plugin-dir`; this exercises the same hooks and the same compactor as production
+rather than a simulation. Compaction is forced by having the agent read ~110K tokens of reference
+files before the trigger task with `CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000` and
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40`; the count is read from the transcript's `compact_boundary`
+rows. Only one compaction per session is reachable: after the first, Claude Code 2.1.311 clears old
+tool results instead of compacting again, and a smaller window thrashes (the CLI aborts when the
+context refills within three turns, three times). Compaction levels are therefore 0 and c1, not
+0/1/2/4. Three seeds per cell; results with Wilson intervals; each run's JSON kept in
+`docs/results/`.
 
-**Arms:** (a) no monitor; (b) Claude Code auto-memory only; (c) pinning only (§7 steps 1–3);
-(d) pinning + behavior watch; (e) pinning + gate (§8). Baseline compactors as in ConPACT:
-recent-N truncation, the Claude Code/Anthropic prompt, and a prompt with an explicit
-"Constraints & Preferences" section.
+Two switches decide how hard the bench is. `--policy-source user|file`: the policy is stated in
+the user prompt, or sits in `TEAM_RULES.md` among benign house rules that the prompt says to read
+and follow (the rule then reaches the context as a tool result). `--trigger plain|hard`: the task
+leaves the compliant route open, or asks for the violating outcome outright, as ConstraintRot's
+triggers do. Violation and completion are graded deterministically from the final project state and
+the transcript's tool calls, never by an LLM judge; "completed" always means the policy-compliant
+outcome.
+
+**Arms:** `none` (no plugin); `pin` (extraction, audit and pinning only, §7); `watch` (pin plus the
+post-compaction behavior watch); `gate` (everything, §8). Claude Code's own auto-memory is off in
+`-p` sessions, so there is no separate auto-memory arm; plugin arms have the policy pre-seeded in
+the ledger, standing in for the earlier turns that would have recorded it (§11 item 7).
 
 **Metrics:** violation rate per seeded entry after 0/1/2/4 compactions; constraint retention %
 (anchor and entailment, §7); false-deny rate on consistent actions; interventions per task and
@@ -430,7 +445,7 @@ task success (does the tempting task still complete, PRE/POST where applicable);
 | 0 (1 day) | Plugin skeleton, `hooks.json`, transcript reader with fixtures, storage layout, real embedder, delete v0.1 monitor/regex/benchmark | Reader parses fixtures from two Claude Code versions; hooks fire in a smoke session and log |
 | 1 (week 1) | Extractor (incremental + full pass), ledger index with anchors, `PreCompact`/`SessionEnd` capture, `PostCompact` anchor + entailment audit, behavior watch, `SessionStart` pinning + briefing, `MEMORY.md` mirror, `/ledger` command | Retention ≥95% and extraction recall ≥90% on a 3-compaction scripted session (`scripts/phase1_check.py`); briefing ≤10 KB; zero main-agent tool calls required. **Met 2026-10-27:** recall 100%, retained 100% at each compaction; summary alone kept 0/12 at the third. |
 | 2 (weeks 2–3) | Gate Tiers 0–3 incl. structural signals and first-mutating-write advisor, resample flow, provenance force, harm budget + shadow mode, intervention log, `Stop` turn check, behavior watch, decision-model adapter + calibration | On the bench: violation rate ≤5% with false-deny ≤2%; unflagged p95 ≤800 ms. **Met 2026-10-27** on the held-out half of `scripts/phase2_check.py` (36 labeled tool calls, 12 user-backed entries): violation 0%, false-deny 0%, unflagged p95 560 ms, advisor on Haiku (Opus/Sonnet refused by OpenRouter's credit pre-check). The post-compaction arm belongs to Phase 3's bench. |
-| 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success |
+| 3 (week 4) | DecisionDrift-Bench with four arms, cost accounting, report | Published numbers with CIs; gate arm beats pinning-only on violation rate without hurting task success. **Run 2026-10-28**, see `docs/results/DECISIONDRIFT.md` for the outcome and §11 items 9–10 for what the bench found in the stack and in the gate. |
 | 4 | Subagent/agent-team injection and checks, dependency graph + orphan surfacing, mod panel, optional MCP tools, TS Agent SDK packaging | Teams smoke test; panel shows retention and last interventions |
 
 ## 11. Open questions and recorded decisions
@@ -471,6 +486,25 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    the advisor errors, which is where every false deny in the failed bench runs came from. Until
    credits are added (or `ANTHROPIC_API_KEY` is set), run the advisor on Haiku
    (`EPISTEMIC_ADVISOR_MODEL=claude-haiku-5-5`); the bench passed with it.
+
+9. **Claude Code 2.1.311's compactor keeps user-stated rules.** Its summary quotes every user
+   message verbatim ("All user messages") and lists stated rules under "Key Technical Concepts", so a
+   policy stated once in the prompt survives one compaction intact, and Haiku 5.5 then follows it,
+   even refusing a later request that conflicts with it. The violation rates the literature reports
+   (§13: ConPACT, ConstraintRot) come from weaker compactors and from policies buried among many
+   turns; they did not reproduce here at one compaction with a single policy turn. The bench
+   therefore measures two things honestly: that the plugin does no harm when the compactor is
+   good (completion and false-deny), and whatever drift remains with hard triggers. Multi-turn,
+   multi-policy sessions and the `file` policy source are the next places to look for drift.
+10. **Gate defects found by the bench, fixed 2026-10-28.** (a) A process entry whose
+   `command_requires_prior` falsifier matched the command and found its prior step was still sent to
+   the decision model, which sees the command but not the history and scored every `git commit`
+   against "run pytest before every commit" as a conflict (p≈0.93); the gate then denied a compliant
+   commit in every commit cell. Such entries are now recorded as `cleared` and never model-scored:
+   the falsifier is the entry's own definition of compliance. (b) The first-mutating-write briefing
+   put every pinned entry on advisor cooldown, so the next real flag was decided on the raw score
+   (≥0.9 uncalibrated) instead of being reviewed by the advisor. Briefings no longer start the
+   cooldown.
 
 ## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
 

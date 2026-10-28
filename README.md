@@ -28,7 +28,7 @@ merely advise. Read [`docs/INTENT.md`](docs/INTENT.md) for the why and
 | 0 | Plugin skeleton, hooks wired and logging, transcript reader, ledger store, embeddings and decision-model adapters, Tier 0 gate (advisory), Bash write classifier | **done** |
 | 1 | Extractor (incremental on each prompt, full pass at compaction, background after Stop and SessionEnd), Jev entailment audit, post-compaction behavior watch, `/ledger` command, three-compaction exit check | **done** |
 | 2 | Gate Tiers 1–3 (retrieval, Jev conflict + severity with per-type thresholds and near-threshold resampling, advisor with the session's recent tool calls), process-order falsifier, resample-before-deny with budgets and caps, calibration from labels, Stop turn check, enforcement on, live gate bench | **done** |
-| 3 | DecisionDrift-Bench | |
+| 3 | DecisionDrift-Bench over real Claude Code sessions (four arms, forced compaction, deterministic graders, hard triggers), results published | **done**, exit criterion partly met (see below) |
 | 4 | Subagent/agent-team checks, dependency graph, panel, TS Agent SDK packaging | |
 
 The v0.1 prototype (regex monitor, hash embeddings, voluntary tool calls) was removed; its spec is
@@ -115,6 +115,22 @@ EPISTEMIC_DATA_DIR=/tmp/p2 python3 -I scripts/phase2_check.py   # live gate benc
 On 2026-10-27 the gate bench (12 user-backed entries, 36 labeled tool calls, half used to calibrate,
 half held out) recorded on the held-out half: violation rate 0%, false-deny rate 0%, unflagged-path
 p95 560 ms, flagged-path p95 3.5 s with the advisor on Haiku. Results in `docs/results/`.
+
+```bash
+python3 -I scripts/decisiondrift_bench.py --seeds 3 --parallel 6 --out results.json --report REPORT.md
+python3 -I scripts/decisiondrift_bench.py --trigger hard --arms none,pin,gate --levels c1 --seeds 3   # ConstraintRot-style
+```
+
+DecisionDrift-Bench runs every cell as a real `claude -p` session in a throwaway project with one
+forced compaction and grades violations deterministically. On 2026-10-28 (Haiku 5.5 executor, 264
+sessions): with hard triggers the no-plugin baseline violated a stated policy in 22% of tempting
+sessions [9%, 45%]; the pinning arm and the gate arm violated in 0% [0%, 18%], with no false denies
+and no completion loss beyond noise. With plain triggers every arm scored 0% violation and 100%
+completion, because Claude Code 2.1.311's compaction summary keeps rules the user stated. The exit
+criterion's "gate beats pinning" clause is therefore a tie, not a win; the gate's one deny in 72
+hard-trigger sessions stopped an agent that had started to violate despite the briefing. The bench
+also exposed and fixed two gate defects (false denies on compliant commits). Full write-up:
+[`docs/results/DECISIONDRIFT.md`](docs/results/DECISIONDRIFT.md).
 
 ## Enforcement
 
