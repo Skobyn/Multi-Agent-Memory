@@ -44,7 +44,8 @@ No dependencies beyond Python 3.10+. From the marketplace, inside Claude Code:
 /plugin install epistemic-panel@epistemic-monitor      # optional: the /epistemic pane
 ```
 
-Then restart Claude Code; `/ledger doctor` makes one real call per component (decision model,
+[`agent-instructions.md`](agent-instructions.md) is a paste-ready brief for a coding agent that does
+the whole setup (shell profile, config files, checks). Then restart Claude Code; `/ledger doctor` makes one real call per component (decision model,
 advisor, extractor, embeddings) and reports PASS or FAIL for each, and `/ledger status` shows the
 resolved configuration. Configure it once for every
 project in `~/.claude/epistemic.json` (see Configuration), since an installed plugin lives in Claude
