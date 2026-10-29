@@ -2,7 +2,7 @@
   "mcpServers": {
     "epistemic-monitor": {
       "command": "python3",
-      "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/bin/em-hook", "mcp"]
+      "args": ["-I", "${CLAUDE_PLUGIN_ROOT:-.}/bin/em-hook", "mcp"]
     }
   }
 }
