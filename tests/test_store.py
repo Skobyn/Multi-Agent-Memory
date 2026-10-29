@@ -105,3 +105,18 @@ def test_supersession_with_replacement_in_same_scope_keeps_siblings(cfg, store):
     new = make_entry(store, statement="Use CockroachDB.", scope={"paths": ["src/db/*"]})
     assert store.supersede(old.id, new.id, "scale", by="user")
     assert store.get_entry(same.id).status == "active"   # the replacement covers the same scope
+
+
+def test_duplicate_groups_retire_and_authority(cfg, store):
+    a = make_entry(store, source="agent", confirmed=False, statement="Do not push, merge, open PRs, or install anything without asking the user first.")
+    b = make_entry(store, source="agent", confirmed=False, statement="Do not push, merge, open PRs, or install anything without asking the user first.")
+    c = make_entry(store, source="agent", confirmed=False, statement="Split the oracle runner into two stages so that a crash in a plugin's own oracle does not hide that plugin's ported units.")
+    d = make_entry(store, source="agent", confirmed=False, statement="Split the oracle runner into two stages so that a crash in a plugin's own oracle does not hide its ported units, and the reverse.")
+    u = make_entry(store, statement="Use PostgreSQL as the primary database.")
+    groups = store.duplicate_groups()
+    assert [[e.id for e in g] for g in groups] == [[a.id, b.id], [c.id, d.id]]
+    assert store.retire(u.id, "noise") is False and store.get_entry(u.id).status == "active"      # authority
+    assert store.retire(u.id, "noise", by="user") is True and store.get_entry(u.id).status == "retired"
+    assert store.retire(b.id, "dup") is True and store.retire(b.id, "dup") is False
+    store.rebuild_from_events()
+    assert store.get_entry(b.id).status == "retired" and store.get_entry(u.id).status == "retired"

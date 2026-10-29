@@ -84,6 +84,12 @@ def ledger(argv: list[str]) -> int:
     s_sup.add_argument("--by", choices=("user", "agent"), default="agent")
     sub.add_parser("pin")
     sub.add_parser("graph", help="dependency and supersession edges, with the entries that need review")
+    s_dd = sub.add_parser("dedupe", help="find active entries that say the same thing; --apply keeps the earliest and supersedes the rest")
+    s_dd.add_argument("--apply", action="store_true"); s_dd.add_argument("--by", choices=("user", "agent"), default="agent")
+    s_dd.add_argument("--jaccard", type=float, default=0.8)
+    s_rt = sub.add_parser("retire", help="close entries without a replacement: by id, or every entry of a provenance")
+    s_rt.add_argument("ids", nargs="*"); s_rt.add_argument("--provenance", choices=("agent", "user"), default=None)
+    s_rt.add_argument("--reason", required=True); s_rt.add_argument("--by", choices=("user", "agent"), default="agent")
     s_res = sub.add_parser("resolve", help="close a review item (orphaned or unknown_current)")
     s_res.add_argument("id"); g = s_res.add_mutually_exclusive_group(required=True)
     g.add_argument("--keep", action="store_true"); g.add_argument("--retire", action="store_true")
@@ -140,6 +146,37 @@ def ledger(argv: list[str]) -> int:
             print(f"\nneeds review: {len(review)}" + ("" if not review else "  (resolve with `ledger resolve <id> --keep|--retire`)"))
             for e in review:
                 print(f"  {e.id}  [{e.status}]  {e.statement}")
+        elif args.cmd == "dedupe":
+            groups = store.duplicate_groups(args.jaccard)
+            if not groups:
+                print("(no duplicates among active entries)")
+            for g in groups:
+                keep, rest = g[0], g[1:]
+                print(f"{keep.id}  keep   {keep.statement[:110]}")
+                for e in rest:
+                    if args.apply:
+                        ok = store.supersede(e.id, keep.id, f"duplicate of {keep.id}", by=args.by, session_id="cli")
+                        print(f"  {e.id}  {'superseded' if ok else 'refused (user entry; use --by user)'}  {e.statement[:100]}")
+                    else:
+                        print(f"  {e.id}  dup    {e.statement[:100]}")
+            if args.apply and groups:
+                write_pinned(cfg, store)
+            elif groups:
+                print(f"\n{sum(len(g) - 1 for g in groups)} would be superseded; rerun with --apply")
+        elif args.cmd == "retire":
+            ids = [i.upper() for i in args.ids]
+            if args.provenance:
+                ids += [e.id for e in store.active_entries() if e.provenance.source == args.provenance and e.id not in ids]
+            if not ids:
+                print("nothing to retire: give ids or --provenance agent|user")
+            n = 0
+            for eid in ids:
+                ok = store.retire(eid, args.reason, by=args.by, session_id="cli")
+                n += ok
+                print(f"{eid}  {'retired' if ok else 'refused or not active'}")
+            if n:
+                write_pinned(cfg, store)
+            print(f"retired {n}")
         elif args.cmd == "resolve":
             ok = store.resolve(args.id.upper(), keep=bool(args.keep))
             write_pinned(cfg, store)

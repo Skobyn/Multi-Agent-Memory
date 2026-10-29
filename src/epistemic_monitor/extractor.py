@@ -160,10 +160,11 @@ def validate_falsifiers(raw: Any) -> list[dict[str, Any]]:
 
 
 class Extractor:
-    def __init__(self, store: LedgerStore, llm: LLMClient, embedder=None, *, dedup_cosine: float = 0.92,
+    def __init__(self, store: LedgerStore, llm: LLMClient, embedder=None, *, dedup_cosine: float = 0.92, text_dedup_jaccard: float = 0.8,
                  max_chars_per_call: int = 24000, max_calls: int = 6, time_budget_s: float = 45.0,
                  min_confidence: float = 0.5) -> None:
         self.store, self.llm, self.embedder = store, llm, embedder
+        self.text_dedup_jaccard = text_dedup_jaccard
         self.dedup_cosine, self.max_chars, self.max_calls = dedup_cosine, max_chars_per_call, max_calls
         self.time_budget_s, self.min_confidence = time_budget_s, min_confidence
 
@@ -221,11 +222,15 @@ class Extractor:
                 result.rejected += 1
                 continue
             norm = _normalize(statement)
-            if norm in normalized_active or norm in new_statements:
+            if norm in normalized_active or norm in new_statements or self._text_near_duplicate(statement, new_statements):
                 result.skipped_duplicates += 1
                 continue
             embedding = self._embed(statement)
             if embedding and self._near_duplicate(embedding):
+                result.skipped_duplicates += 1
+                continue
+            # another extraction may have added the same statement since this run began (parallel sessions)
+            if norm in {_normalize(e.statement) for e in self.store.active_entries()}:
                 result.skipped_duplicates += 1
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
@@ -271,6 +276,21 @@ class Extractor:
         except Exception:  # noqa: BLE001 - embeddings are optional; one failure disables them for this run
             self.embedder = None
             return None
+
+    def _text_near_duplicate(self, statement: str, pending: set[str] | None = None) -> bool:
+        """Paraphrase check that needs no embeddings: word-set Jaccard against every active statement (and the
+        statements queued in this run) at or above ``text_dedup_jaccard``."""
+        words = set(_normalize(statement).split())
+        if len(words) < 4:
+            return False
+        others = [_normalize(e.statement) for e in self.store.active_entries()] + list(pending or [])
+        for other in others:
+            ow = set(other.split())
+            if not ow:
+                continue
+            if len(words & ow) / len(words | ow) >= self.text_dedup_jaccard:
+                return True
+        return False
 
     def _near_duplicate(self, embedding: list[float]) -> bool:
         hits = self.store.search_vector(embedding, top_k=1)

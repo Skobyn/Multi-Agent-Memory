@@ -188,6 +188,11 @@ also exposed and fixed two gate defects (false denies on compliant commits). Ful
 - **Agent SDK.** `sdk/typescript` attaches the plugin to a `query()` call as a `plugins` entry or as
   hook callbacks that run the same hook commands.
 
+**Cleaning up.** `/ledger dedupe --apply` merges entries that say the same thing (earliest kept),
+`/ledger retire <id>... --reason "..."` closes entries, and `/ledger retire --provenance agent --reason "..."`
+clears everything the agent inferred in one go; user-made entries need `--by user`. The Stop and
+subagent checks only ever block on user-made entries.
+
 ## Enforcement
 
 The gate is on by default and budgeted. A tool call is denied only when it is **hard**: it trips a

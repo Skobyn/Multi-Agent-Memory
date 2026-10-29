@@ -525,9 +525,14 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    per-session debounce at prompt time; (d) `claude -p` children run in their own process group and
    are killed when the call times out or the hook receives SIGTERM/SIGHUP. Skipped prompt-time
    extractions are not lost: the full pass at `PreCompact`/`SessionEnd` reads from the watermark.
-   A side effect worth knowing: instructions the user gives to a subagent in a prompt are recorded
-   with user authority and global scope (one such entry blocked the user's own edits); scoping
-   extracted entries to the agent they were addressed to is open.
+   The ledger the loop left behind had 70 agent-made entries, many of them verbatim or paraphrased
+   duplicates (parallel extractions raced past the equality check) and many task-local premises that
+   go stale within hours. Shipped with the fix: a word-overlap paraphrase check in the extractor that
+   needs no embeddings plus a fresh equality check right before insert; `ledger dedupe` and
+   `ledger retire` for cleanup; and the Stop/SubagentStop turn check now considers only user-made
+   entries, so a stale agent premise can never block a reply (INTENT principle 6). Open: scoping
+   entries extracted from instructions addressed to a subagent to that agent, and letting
+   agent-made premises expire.
 
 ## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
 
