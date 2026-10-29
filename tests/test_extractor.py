@@ -97,3 +97,18 @@ def test_validate_falsifiers():
         "garbage",
     ])
     assert [f["kind"] for f in out] == ["path_glob_required_with", "command_regex_forbidden", "shell_check"]
+
+
+def test_text_near_duplicates_are_skipped_without_embeddings(cfg, store):
+    from fakes import FakeLLM
+    from helpers import make_entry
+    from epistemic_monitor.extractor import Extractor
+    from epistemic_monitor.transcript import KIND_USER_TEXT, Turn
+    make_entry(store, source="agent", confirmed=False, statement="Split the oracle runner into two stages so that a crash in a plugin's own oracle does not hide that plugin's ported units.")
+    llm = FakeLLM([{"entries": [
+        {"type": "decision", "statement": "Split the oracle runner into two stages so that a crash in a plugin's own oracle does not hide its ported units.", "rationale": "", "scope": {}, "anchors": []},
+        {"type": "decision", "statement": "Run the whole oracle in one stage and let crashes surface together.", "rationale": "", "scope": {}, "anchors": []},
+    ], "supersedes": []}])
+    ex = Extractor(store, llm, embedder=None)
+    res = ex.run([Turn(uuid="u1", kind=KIND_USER_TEXT, role="user", text="Decisions recap for the port runner." * 3)], "s1", mode="incremental")
+    assert res.skipped_duplicates == 1 and len(res.added) == 1

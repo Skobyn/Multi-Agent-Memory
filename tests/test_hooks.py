@@ -368,3 +368,12 @@ def test_session_start_writes_component_status(cfg, store, monkeypatch):
     assert c["advisor"]["provider"] == "claude-cli" and c["advisor"]["model"] == "claude-opus-5-5"
     assert c["extractor"] == {"provider": "openrouter", "model": "anthropic/claude-haiku-5.5"}
     assert c["embeddings"]["provider"] == "none" and st["gate"]["enforce"] is True
+
+
+def test_turn_check_ignores_agent_made_entries(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.95))
+    make_entry(store, source="agent", confirmed=False, statement="The ace-workitems port has 11 units and is not yet committed.")
+    store.close()
+    msg = "I committed the ace-workitems port with 12 units after the review. " * 3
+    assert _run("stop", {"last_assistant_message": msg, "stop_hook_active": False}, cfg) is None
+    assert _logged(cfg, "stop")[-1]["turn_check_skipped"] == "no user-made entries"

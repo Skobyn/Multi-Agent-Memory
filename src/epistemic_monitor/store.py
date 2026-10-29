@@ -193,6 +193,44 @@ class LedgerStore:
     def set_status(self, entry_id: str, status: str, reason: str = "") -> None:
         self._apply_event({"event": "status", "id": entry_id, "status": status, "reason": reason})
 
+    def retire(self, entry_id: str, reason: str, by: str = "agent", session_id: str = "") -> bool:
+        """Close an entry without a replacement. Authority rule as for supersede: a user-made entry needs by='user'."""
+        e = self.get_entry(entry_id)
+        if e is None or e.status == "retired":
+            return False
+        if e.provenance.source == "user" and by != "user":
+            self.log_intervention({"kind": "retire_refused", "entry": entry_id, "by": by, "reason": reason, "session_id": session_id})
+            return False
+        self._apply_event({"event": "status", "id": entry_id, "status": "retired", "reason": reason, "by": by, "session_id": session_id})
+        return True
+
+    def duplicate_groups(self, jaccard: float = 0.8) -> list[list[Entry]]:
+        """Active entries whose statements are the same after normalization or near-paraphrases (word-set Jaccard
+        at or above ``jaccard``), grouped, earliest id first."""
+        import re as _re
+        def norm(t: str) -> str:
+            return _re.sub(r"[^a-z0-9 ]+", " ", t.lower()).strip()
+        entries = sorted(self.active_entries(), key=lambda e: (e.type, e.id))
+        groups: list[list[Entry]] = []
+        taken: set[str] = set()
+        for i, a in enumerate(entries):
+            if a.id in taken:
+                continue
+            aw = set(norm(a.statement).split())
+            group = [a]
+            for b in entries[i + 1:]:
+                if b.id in taken or b.type != a.type:
+                    continue
+                bw = set(norm(b.statement).split())
+                same = norm(a.statement) == norm(b.statement)
+                if same or (len(aw) >= 4 and len(bw) >= 4 and len(aw & bw) / len(aw | bw) >= jaccard):
+                    group.append(b)
+                    taken.add(b.id)
+            if len(group) > 1:
+                taken.add(a.id)
+                groups.append(group)
+        return groups
+
     def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "") -> bool:
         """Apply the authority rule (DESIGN §3): a user-provenance entry can only be
         superseded with ``by="user"``. Returns False when refused."""
