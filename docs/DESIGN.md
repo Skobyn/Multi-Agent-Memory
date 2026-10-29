@@ -510,6 +510,25 @@ Still open, with the experiment that closes each (none blocks Phase 0–1):
    (≥0.9 uncalibrated) instead of being reviewed by the advisor. Briefings no longer start the
    cooldown.
 
+11. **Incident 2026-10-29: extraction fan-out through the `claude-cli` provider.** Overnight, with
+   5–7 subagents active and the plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS`, the host reached 100+
+   `user_prompt_submit` hooks, 30 `extract-text` workers and 200 `claude -p` processes at once (load
+   average 470). Cause: each extraction's `claude -p` child inherited `CLAUDE_CODE_PLUGIN_DIRS`
+   (`--setting-sources project` governs settings files, not that variable), loaded the plugin, and
+   its own hooks started more extractions; nothing capped concurrency, and hooks killed at their
+   timeout left their children to launchd. Fixes, all shipped: (a) every process the plugin starts
+   carries `EPISTEMIC_MONITOR_CHILD=1` with `CLAUDE_CODE_PLUGIN_DIRS`, `CLAUDE_SESSION_ID`,
+   `CLAUDE_PROJECT_DIR` and `CLAUDE_PLUGIN_ROOT` removed, and a hook that sees the flag exits before
+   reading anything; (b) `extraction.max_concurrent` (default 2) machine-wide slots held by file lock
+   for every model-calling extraction (prompt-time, pending captures, Stop text), with the work
+   skipped, not queued, when the slots are busy; (c) `extraction.min_interval_s` (default 20)
+   per-session debounce at prompt time; (d) `claude -p` children run in their own process group and
+   are killed when the call times out or the hook receives SIGTERM/SIGHUP. Skipped prompt-time
+   extractions are not lost: the full pass at `PreCompact`/`SessionEnd` reads from the watermark.
+   A side effect worth knowing: instructions the user gives to a subagent in a prompt are recorded
+   with user authority and global scope (one such entry blocked the user's own edits); scoping
+   extracted entries to the agent they were addressed to is open.
+
 ## Appendix A. Tier 0 classifier: does this `Bash` command write a source file?
 
 Purpose: PAUSE and LivePlan both report that agents edit source through the shell and slip past
@@ -615,6 +634,7 @@ environment of the Claude Code process: `TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`,
     "fallback": "llm"                  // llm | skip  (what Tier 2 does when the provider is unavailable)
   },
   "extractor": {"provider": "auto", "model": "claude-haiku-5-5", "timeout_ms": 30000},   // auto = anthropic if ANTHROPIC_API_KEY else openrouter; claude-cli = through `claude -p`
+  "extraction": {"max_concurrent": 2, "min_interval_s": 20},                             // machine-wide slots and per-session debounce (§11 item 11)
   "advisor":   {"provider": "auto", "model": "claude-opus-5-5",  "timeout_ms": 20000},
   "embeddings": {"provider": "openrouter", "model": "openai/text-embedding-3-small"},   // openrouter | local | none
   "gate": {

@@ -44,7 +44,8 @@ No dependencies beyond Python 3.10+. From the marketplace, inside Claude Code:
 /plugin install epistemic-panel@epistemic-monitor      # optional: the /epistemic pane
 ```
 
-Then restart Claude Code; `/ledger doctor` makes one real call per component (decision model,
+[`agent-instructions.md`](agent-instructions.md) is a paste-ready brief for a coding agent that does
+the whole setup (shell profile, config files, checks). Then restart Claude Code; `/ledger doctor` makes one real call per component (decision model,
 advisor, extractor, embeddings) and reports PASS or FAIL for each, and `/ledger status` shows the
 resolved configuration. Configure it once for every
 project in `~/.claude/epistemic.json` (see Configuration), since an installed plugin lives in Claude
@@ -100,6 +101,12 @@ pay for it: OpenRouter pre-checks each request against prepaid credits, so with 
 and Sonnet requests are refused (HTTP 402) while Haiku passes; set `EPISTEMIC_ADVISOR_MODEL` or add
 credits. Secrets come only from `TYPESAFE_API_KEY`,
 `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Limits on the plugin's own work.** At most `extraction.max_concurrent` (default 2) extractions call a
+model at the same time on a machine, prompt-time extraction runs at most once per
+`extraction.min_interval_s` (default 20) per session, and anything the plugin spawns carries
+`EPISTEMIC_MONITOR_CHILD=1` without `CLAUDE_CODE_PLUGIN_DIRS`, so a nested session never runs the
+plugin's hooks (DESIGN §11 item 11 records the incident behind these).
 
 **Using a Claude subscription.** Set `EPISTEMIC_ADVISOR_PROVIDER=claude-cli` (and, if wanted,
 `EPISTEMIC_EXTRACTOR_PROVIDER=claude-cli`). Each call then runs as one tool-less, hook-less,

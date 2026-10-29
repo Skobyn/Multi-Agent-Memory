@@ -44,6 +44,24 @@ def to_openrouter_model(model: str) -> str:
 
 
 CLI_ALIASES = {"claude-cli", "claude_cli", "cli"}
+_CHILDREN: set = set()
+
+
+def _kill_group(proc) -> None:  # noqa: ANN001
+    try:
+        os.killpg(proc.pid, 9)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def kill_children() -> None:
+    """Kill every `claude -p` this process started (used when the hook itself is being terminated)."""
+    for proc in list(_CHILDREN):
+        _kill_group(proc)
+    _CHILDREN.clear()
 
 
 def resolve_provider(provider: str, environ: dict[str, str] | None = None) -> str:
@@ -81,18 +99,28 @@ class LLMClient:
         dropped from the environment so the call is not recorded as part of it."""
         scratch = os.path.join(tempfile.gettempdir(), "epistemic-monitor-cli")
         os.makedirs(scratch, exist_ok=True)
-        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_ROOT")}
+        from .throttle import child_env
+        env = child_env()   # no CLAUDE_CODE_PLUGIN_DIRS, no parent session, EPISTEMIC_MONITOR_CHILD=1: the nested
+        #                     session loads no plugin and, if it somehow did, every hook would exit at once
         # `--setting-sources project` with a scratch cwd loads no settings and no hooks (`--bare` would, but it also
         # skips the CLI's stored credentials in some installs, which is the whole point of this provider).
         args = [self.command, "-p", "--no-session-persistence", "--setting-sources", "project", "--output-format", "json",
                 "--max-turns", "1", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                 "--model", self.model, "--system-prompt", system]
         try:
-            p = subprocess.run(args, input=user, capture_output=True, text=True, timeout=self.timeout, cwd=scratch, env=env)
-        except subprocess.TimeoutExpired as e:
-            raise LLMError(f"claude-cli: timed out after {self.timeout:.0f}s") from e
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    cwd=scratch, env=env, start_new_session=True)
         except OSError as e:
             raise LLMError(f"claude-cli: cannot run {self.command!r}: {e}") from e
+        _CHILDREN.add(proc)
+        try:
+            out, err = proc.communicate(user, timeout=self.timeout)
+        except subprocess.TimeoutExpired as e:
+            _kill_group(proc)
+            raise LLMError(f"claude-cli: timed out after {self.timeout:.0f}s") from e
+        finally:
+            _CHILDREN.discard(proc)
+        p = subprocess.CompletedProcess(args, proc.returncode, out, err)
         lines = [l for l in p.stdout.splitlines() if l.startswith("{")]
         data: dict[str, Any] = {}
         if lines:
