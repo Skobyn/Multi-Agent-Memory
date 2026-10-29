@@ -74,6 +74,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "max_chars_per_call": 24000, "max_calls": 6,
         "full_time_budget_s": 40, "incremental_time_budget_s": 20,
         "background_on_session_end": True, "on_stop": True, "stop_min_chars": 200,
+        "max_concurrent": 2,        # machine-wide cap on extractions that call a model at the same time
+        "min_interval_s": 20,       # per-session debounce for prompt-time extraction
     },
     "logging": {"shadow_mode": True, "level": "info"},
 }

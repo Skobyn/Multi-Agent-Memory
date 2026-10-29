@@ -4,6 +4,8 @@ never crash the session, always leave a log line."""
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sys
 import time
 import traceback
@@ -11,6 +13,7 @@ from typing import Any, Callable
 
 from .config import Config, load_config
 from .store import LedgerStore
+from .throttle import is_child
 
 HOOK_EVENT_NAMES = {
     "session_start": "SessionStart",
@@ -57,10 +60,31 @@ def block(reason: str) -> dict[str, Any]:
     return {"decision": "block", "reason": reason[:10000]}
 
 
+def _install_term_handler() -> None:
+    """When Claude Code kills a hook at its timeout, take the hook's own children (a `claude -p` call) with it
+    instead of leaving them to launchd."""
+    def _on_term(signum, frame):  # noqa: ANN001
+        try:
+            from .llm import kill_children
+            kill_children()
+        finally:
+            os._exit(0)
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+        signal.signal(signal.SIGHUP, _on_term)
+    except (ValueError, OSError):
+        pass
+
+
 def run(event: str, handler: Handler, payload: dict[str, Any] | None = None, stdout=None) -> int:
     """Execute a hook handler with full error containment. Exit code is always 0:
     the monitor must never be the reason a session fails."""
     out_stream = stdout or sys.stdout
+    if is_child():
+        # A session the plugin itself started (the claude-cli provider, a background worker): never run the
+        # loop inside the loop. Read nothing, log nothing, allow everything.
+        return 0
+    _install_term_handler()
     payload = read_payload() if payload is None else payload
     t0 = time.monotonic()
     cfg: Config | None = None

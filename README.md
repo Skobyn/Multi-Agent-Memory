@@ -102,6 +102,12 @@ and Sonnet requests are refused (HTTP 402) while Haiku passes; set `EPISTEMIC_AD
 credits. Secrets come only from `TYPESAFE_API_KEY`,
 `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
 
+**Limits on the plugin's own work.** At most `extraction.max_concurrent` (default 2) extractions call a
+model at the same time on a machine, prompt-time extraction runs at most once per
+`extraction.min_interval_s` (default 20) per session, and anything the plugin spawns carries
+`EPISTEMIC_MONITOR_CHILD=1` without `CLAUDE_CODE_PLUGIN_DIRS`, so a nested session never runs the
+plugin's hooks (DESIGN §11 item 11 records the incident behind these).
+
 **Using a Claude subscription.** Set `EPISTEMIC_ADVISOR_PROVIDER=claude-cli` (and, if wanted,
 `EPISTEMIC_EXTRACTOR_PROVIDER=claude-cli`). Each call then runs as one tool-less, hook-less,
 unpersisted turn of `claude -p`, billed to whatever the CLI is signed in with. A subscription token

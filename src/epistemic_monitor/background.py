@@ -22,9 +22,10 @@ def spawn(cfg: Config, args: list[str]) -> int | None:
     try:
         cfg.ensure_dirs()
         log = open(cfg.data_dir / "background.log", "ab")
-        env = dict(os.environ)
-        env.setdefault("EPISTEMIC_DATA_DIR", str(cfg.data_dir))
-        env.setdefault("CLAUDE_PROJECT_DIR", str(cfg.cwd))
+        from .throttle import child_env
+        env = child_env()   # the worker calls models but must never be mistaken for a session's hook
+        env["EPISTEMIC_DATA_DIR"] = str(cfg.data_dir)
+        env["CLAUDE_PROJECT_DIR"] = str(cfg.cwd)
         proc = subprocess.Popen([sys.executable, "-I", str(EM_HOOK), *args], stdout=log, stderr=log,
                                 stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True, env=env,
                                 cwd=str(cfg.cwd) if cfg.cwd.exists() else None)

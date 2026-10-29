@@ -386,10 +386,21 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
     applied = _apply_supersede_lines(prompt, "user", store, sid)
     record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
     if cfg.get("extraction", "incremental", True) and len(prompt.strip()) >= 12:
-        ex = _extractor_for(cfg, store, float(cfg.get("extraction", "incremental_time_budget_s", 20)))
-        if ex is not None:
-            prev = _last_assistant_text(payload.get("transcript_path"))
-            record["extraction"] = ex.run_incremental(prompt, prev, sid).to_dict()
+        last = float(store.get_state(sid, "last_extraction_ts", 0) or 0)
+        min_gap = float(cfg.get("extraction", "min_interval_s", 20))
+        if time.time() - last < min_gap:
+            record["extraction"] = {"skipped": "debounced", "seconds_since_last": round(time.time() - last, 1)}
+        else:
+            from .throttle import slot
+            with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
+                if not got:
+                    record["extraction"] = {"skipped": "busy", "max_concurrent": int(cfg.get("extraction", "max_concurrent", 2))}
+                else:
+                    ex = _extractor_for(cfg, store, float(cfg.get("extraction", "incremental_time_budget_s", 20)))
+                    if ex is not None:
+                        store.set_state(sid, "last_extraction_ts", time.time())
+                        prev = _last_assistant_text(payload.get("transcript_path"))
+                        record["extraction"] = ex.run_incremental(prompt, prev, sid).to_dict()
     store.log_intervention(record)
     return None
 

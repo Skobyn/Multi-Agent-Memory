@@ -213,11 +213,16 @@ def extract_capture(argv: list[str]) -> int:
     p.add_argument("--budget", type=float, default=120.0)
     args = p.parse_args(argv)
     cfg = load_config()
-    store = LedgerStore(cfg)
-    try:
-        print(json.dumps(_extract_one_capture(cfg, store, args.path, args.session, args.budget)))
-    finally:
-        store.close()
+    from .throttle import slot
+    with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
+        if not got:
+            print(json.dumps({"skipped": "busy"}))
+            return 0
+        store = LedgerStore(cfg)
+        try:
+            print(json.dumps(_extract_one_capture(cfg, store, args.path, args.session, args.budget)))
+        finally:
+            store.close()
     return 0
 
 
@@ -228,7 +233,16 @@ def extract_pending(argv: list[str]) -> int:
     p.add_argument("--budget", type=float, default=120.0)
     args = p.parse_args(argv)
     from .hooks import pending_dir
+    from .throttle import slot
     cfg = load_config()
+    with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
+        if not got:
+            print(json.dumps({"skipped": "busy"}))   # markers stay; the next SessionStart retries
+            return 0
+        return _extract_pending_locked(cfg, pending_dir, args.budget)
+
+
+def _extract_pending_locked(cfg, pending_dir, budget: float) -> int:  # noqa: ANN001
     store = LedgerStore(cfg)
     done, left = [], []
     try:
@@ -242,7 +256,7 @@ def extract_pending(argv: list[str]) -> int:
             if not Path(capture).exists():
                 marker.unlink(missing_ok=True)
                 continue
-            res = _extract_one_capture(cfg, store, capture, str(info.get("session_id", "unknown")), args.budget)
+            res = _extract_one_capture(cfg, store, capture, str(info.get("session_id", "unknown")), budget)
             if res.get("complete"):
                 marker.unlink(missing_ok=True)
                 done.append(capture)
@@ -262,25 +276,30 @@ def extract_text(argv: list[str]) -> int:
     p.add_argument("--budget", type=float, default=60.0)
     args = p.parse_args(argv)
     from .hooks import _extractor_for
+    from .throttle import slot
     cfg = load_config()
-    store = LedgerStore(cfg)
-    try:
-        text = Path(args.path).read_text(encoding="utf-8", errors="replace")
-        kind = KIND_USER_TEXT if args.role == "user" else KIND_ASSISTANT_TEXT
-        ex = _extractor_for(cfg, store, args.budget)
-        res = ex.run([Turn(uuid="", kind=kind, role=args.role, text=text)], args.session, mode="incremental").to_dict() \
-            if ex else {"skipped": "no extractor"}
-        if res.get("added"):
-            write_pinned(cfg, store)
-        store.log_intervention({"kind": "background_extraction", "source": f"stop:{args.role}", "session_id": args.session,
-                                "chars": len(text), "extraction": res})
+    with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
+        if not got:
+            print(json.dumps({"skipped": "busy"}))   # the text file stays for a later run
+            return 0
+        store = LedgerStore(cfg)
         try:
-            Path(args.path).unlink()
-        except OSError:
-            pass
-        print(json.dumps(res))
-    finally:
-        store.close()
+            text = Path(args.path).read_text(encoding="utf-8", errors="replace")
+            kind = KIND_USER_TEXT if args.role == "user" else KIND_ASSISTANT_TEXT
+            ex = _extractor_for(cfg, store, args.budget)
+            res = ex.run([Turn(uuid="", kind=kind, role=args.role, text=text)], args.session, mode="incremental").to_dict() \
+                if ex else {"skipped": "no extractor"}
+            if res.get("added"):
+                write_pinned(cfg, store)
+            store.log_intervention({"kind": "background_extraction", "source": f"stop:{args.role}", "session_id": args.session,
+                                    "chars": len(text), "extraction": res})
+            try:
+                Path(args.path).unlink()
+            except OSError:
+                pass
+            print(json.dumps(res))
+        finally:
+            store.close()
     return 0
 
 
