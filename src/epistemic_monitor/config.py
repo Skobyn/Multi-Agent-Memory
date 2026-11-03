@@ -64,6 +64,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "advisor_slice_turns": 12,
         "history_max": 60,
     },
+    # Premise drift (MemTrace-style validity check): off by default; agent/summary premises only.
+    "drift": {"enabled": False, "time_budget_s": 0.2, "max_paths": 10},
     "pinning": {"max_entries": 25, "max_chars": 10000, "mirror_memory_md": True},
     "audit": {
         "entailment_check": True, "entailment_threshold": 0.5, "entailment_time_budget_s": 10,
