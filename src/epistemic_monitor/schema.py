@@ -63,6 +63,7 @@ class Entry:
     valid_to: str | None = None
     last_verified: str = field(default_factory=now_iso)
     embedding_ref: str | None = None
+    scope_fingerprint: dict[str, str] = field(default_factory=dict)  # path -> content hash when written (agent premises only)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,6 +82,7 @@ class Entry:
             superseded_by=d.get("superseded_by"), depends_on=list(d.get("depends_on", [])),
             valid_from=d.get("valid_from") or now_iso(), valid_to=d.get("valid_to"),
             last_verified=d.get("last_verified") or now_iso(), embedding_ref=d.get("embedding_ref"),
+            scope_fingerprint={str(k): str(v) for k, v in (d.get("scope_fingerprint") or {}).items()},
         )
 
     def validate(self) -> list[str]:

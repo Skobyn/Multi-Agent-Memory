@@ -249,6 +249,9 @@ class Extractor:
                                       timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
                 depends_on=depends,
             )
+            if etype == "premise" and source != "user" and self.store.config.get("drift", "enabled", False):
+                from .drift import fingerprint
+                entry.scope_fingerprint = fingerprint(self.store.config.cwd, scope.paths)
             try:
                 self.store.add_entry(entry, embedding)
             except ValueError as e:

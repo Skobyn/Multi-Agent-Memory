@@ -682,3 +682,18 @@ github.com/edward-lcl/factor-ut-untrusted-decomposer.
 Platform: Claude Code hooks https://code.claude.com/docs/en/hooks · memory
 https://code.claude.com/docs/en/memory · TypeSafe API https://docs.typesafe.ai/api ·
 OpenAPI https://api.typesafe.ai/openapi.json.
+
+## Addendum (2026-11-03): two ideas from recent memory research
+
+Chosen after a literature sweep (MemTrace 2610.04838, TOKI 2606.06240, MemIR 2605.25869, REALM 2609.16053)
+and an adversarial review of each candidate. Both were narrowed on the reviewers' objections.
+
+- **Premise drift** (`drift.py`, config `drift.enabled`, default off). Agent/summary *premises* with literal
+  `scope.paths` store a `scope_fingerprint` (content hashes). At `SessionStart` (never in the gate, 200 ms cap)
+  a changed file moves the premise to `unknown_current` for `/ledger resolve`; `--keep` re-baselines.
+  User-authority entries and constraints are never touched.
+- **Gate feedback report** (`em ledger feedback`, `feedback.py`). Read-only: lists entries flagged >= N times then
+  superseded by the user (review candidates) and entries whose flags were mostly labeled `ok` (tighten scope).
+  It writes no events: a flag followed by a supersession is ambiguous, and auto-retiring would erode constraints.
+- **Not built:** TOKI judge-decision logging. Replay already applies stored events and never re-asks an LLM;
+  a prompt hash would not make a CLI-provider judge deterministic.

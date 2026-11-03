@@ -96,6 +96,8 @@ def ledger(argv: list[str]) -> int:
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
     sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
+    s_fb = sub.add_parser("feedback", help="read-only: entries often flagged then superseded by the user, and noisy flags labeled ok")
+    s_fb.add_argument("--min-flags", type=int, default=3)
     s_rev = sub.add_parser("review", help="list recent gate decisions that involved the decision model, for labeling")
     s_rev.add_argument("n", nargs="?", type=int, default=20)
     s_lab = sub.add_parser("label", help="record whether a flagged tool call really conflicted")
@@ -179,6 +181,9 @@ def ledger(argv: list[str]) -> int:
             print(f"retired {n}")
         elif args.cmd == "resolve":
             ok = store.resolve(args.id.upper(), keep=bool(args.keep))
+            if ok and args.keep:
+                from .drift import rebaseline
+                rebaseline(store, cfg.cwd, args.id.upper())
             write_pinned(cfg, store)
             print(("kept " if args.keep else "retired ") + args.id.upper() if ok else f"{args.id.upper()} is not under review")
         elif args.cmd == "interventions":
@@ -189,6 +194,16 @@ def ledger(argv: list[str]) -> int:
         elif args.cmd == "doctor":
             from .doctor import main as doctor_main
             return doctor_main([])
+        elif args.cmd == "feedback":
+            from .calibration import read_labels
+            from .feedback import feedback_report
+            rep = feedback_report(store.recent_interventions(20000), read_labels(cfg), args.min_flags)
+            for r in rep["candidates_for_review"]:
+                print(f"review   {r['entry']}  flagged {r['flags']}x, then superseded by the user")
+            for r in rep["tighten"]:
+                print(f"tighten  {r['entry']}  {r['labeled_ok']}/{r['flags']} flags labeled ok (loosen its scope or falsifier)")
+            if not any(rep.values()):
+                print("(no feedback signals yet; label flagged calls with: em ledger label <tool_use_id> conflict|ok)")
         elif args.cmd == "review":
             gates = [r for r in store.recent_interventions(2000) if r.get("kind") == "gate" and r.get("scores")][-args.n:]
             if not gates:
