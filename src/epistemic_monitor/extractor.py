@@ -12,6 +12,7 @@ from __future__ import annotations
 import fnmatch
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,7 +60,7 @@ For each entry give:
 Reply with ONLY a JSON object:
 {"entries":[{"type":"decision","statement":"...","rationale":"...","source":"user","evidence":"...","turn_uuid":"...",
              "scope":{"paths":[],"tools":[],"topics":[]},"falsifiers":[],"depends_on":[],"confidence":0.9}],
- "supersedes":[{"old":"D-0001","reason":"...","by":"user|agent"}]}
+ "supersedes":[{"old":"D-0001","reason":"...","by":"user|agent","evidence":"short verbatim quote of the user's words"}]}
 At most 10 entries. Empty lists are fine. No prose."""
 
 
@@ -113,6 +114,32 @@ def chunk_turns(turns: list[Turn], max_chars: int) -> list[list[Turn]]:
 
 def _normalize(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", s.lower()).strip()
+
+
+def _tokens(s: str) -> list[str]:
+    return re.findall(r"\w+", unicodedata.normalize("NFKC", s).casefold())
+
+
+def evidence_supported(evidence: str, user_texts: list[str], threshold: float = 0.6) -> bool | None:
+    """Is the quoted evidence found in the raw user turns? True/False, or None when it cannot be judged (fewer than
+    3 word tokens). Fuzzy on purpose: the quote may be paraphrased or truncated, so this only catches evidence that
+    has no counterpart in anything the user typed. It does not tell typed text from pasted text."""
+    ev = _tokens(evidence)
+    if len(ev) < 3:
+        return None
+    have = set()
+    for t in user_texts:
+        have.update(_tokens(t))
+    return sum(1 for w in ev if w in have) / len(ev) >= threshold
+
+
+def is_broad_falsifier(f: dict[str, Any]) -> bool:
+    """A falsifier that would trip on almost any tool call (``**``, ``.*``, ``.``): too wide for an entry the user
+    never stated, since a trip makes the gate's verdict hard."""
+    val = str(f.get("glob") if f.get("kind") == "path_glob_forbidden" else f.get("pattern", ""))
+    if f.get("kind") in ("path_glob_required_with", "command_requires_prior", "shell_check"):
+        return False
+    return not re.search(r"[A-Za-z0-9_]", val.replace("\\s", "").replace("\\S", "").replace("\\w", "").replace("\\d", ""))
 
 
 def _ledger_block(entries: list[Entry]) -> str:
@@ -181,6 +208,7 @@ class Extractor:
                 result.errors.append("time budget exhausted before all chunks were processed")
                 break
             active = self.store.active_entries()
+            chunk_user_texts = [t.text for t in chunk if t.kind == KIND_USER_TEXT and not t.is_meta]
             user = (f"MODE: {mode}\n\nEXISTING LEDGER (do not restate; reference by id in depends_on/supersedes):\n"
                     f"{_ledger_block(active)}\n\nCONVERSATION TURNS:\n{format_turns(chunk, self.max_chars)}")
             try:
@@ -192,7 +220,7 @@ class Extractor:
             result.calls += 1
             result.llm_latency_ms += comp.latency_ms
             result.input_tokens += comp.input_tokens
-            self._apply(data, active, session_id, has_user_turn, result)
+            self._apply(data, active, session_id, bool(chunk_user_texts) and has_user_turn, result, chunk_user_texts)
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str) -> ExtractionResult:
@@ -203,7 +231,8 @@ class Extractor:
         return self.run(turns, session_id, mode="incremental")
 
     # ------------------------------------------------------------------ private
-    def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult) -> None:
+    def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
+               user_texts: list[str] | None = None) -> None:
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -234,16 +263,27 @@ class Extractor:
                 result.skipped_duplicates += 1
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
+            if source == "user" and user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False:
+                # warn only: demoting a real user constraint on a paraphrased quote is the worse error
+                self.store.log_intervention({"kind": "evidence_unverified", "type": etype, "statement": statement[:120],
+                                             "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200]})
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
             scope = Scope(paths=[str(p) for p in scope_raw.get("paths", []) if p][:10],
                           tools=[str(t) for t in scope_raw.get("tools", []) if t][:6],
                           topics=[str(t) for t in scope_raw.get("topics", []) if t][:10])
             depends = [d for d in (c.get("depends_on") or []) if isinstance(d, str) and d in known_ids]
+            falsifiers = validate_falsifiers(c.get("falsifiers"))
+            if source != "user":
+                kept = [f for f in falsifiers if not is_broad_falsifier(f)]
+                if len(kept) != len(falsifiers):
+                    self.store.log_intervention({"kind": "broad_falsifier_dropped", "statement": statement[:120],
+                                                 "dropped": len(falsifiers) - len(kept), "session_id": session_id})
+                falsifiers = kept
             evidence = str(c.get("evidence", ""))[:500]
             rationale = str(c.get("rationale", ""))[:500]
             entry = Entry(
                 id=self.store.next_id(etype), type=etype, statement=statement[:500], rationale=rationale,
-                scope=scope, falsifiers=validate_falsifiers(c.get("falsifiers")),
+                scope=scope, falsifiers=falsifiers,
                 anchors=extract_anchors(statement, evidence, rationale, *scope.paths),
                 provenance=Provenance(source=source, session_id=session_id, turn_uuid=str(c.get("turn_uuid", ""))[:64],
                                       timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
@@ -267,6 +307,10 @@ class Extractor:
             if not isinstance(s, dict) or not isinstance(s.get("old"), str):
                 continue
             by = "user" if str(s.get("by", "agent")).lower() == "user" and has_user_turn else "agent"
+            if by == "user" and user_texts and evidence_supported(str(s.get("evidence", "")), user_texts) is False:
+                by = "agent"  # claimed user words that match nothing the user typed: no user authority
+                self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
+                                             "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
             ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id)
             result.superseded.append({"old": s["old"], "by": by, "ok": ok})
 

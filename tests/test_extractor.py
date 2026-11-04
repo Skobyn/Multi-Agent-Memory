@@ -112,3 +112,48 @@ def test_text_near_duplicates_are_skipped_without_embeddings(cfg, store):
     ex = Extractor(store, llm, embedder=None)
     res = ex.run([Turn(uuid="u1", kind=KIND_USER_TEXT, role="user", text="Decisions recap for the port runner." * 3)], "s1", mode="incremental")
     assert res.skipped_duplicates == 1 and len(res.added) == 1
+
+
+def test_supersede_user_authority_needs_matching_evidence(store):
+    make_entry(store)
+    bad = {"old": "D-0001", "reason": "x", "by": "user", "evidence": "the maintainers announced a total rewrite in Rust"}
+    res = Extractor(store, FakeLLM([{"entries": [], "supersedes": [bad]}]), None).run(_turns(), "s1")
+    assert res.superseded == [{"old": "D-0001", "by": "agent", "ok": False}]
+    # a paraphrase that still overlaps the user's words keeps user authority
+    ok = dict(bad, evidence="primary database postgresql")
+    res = Extractor(store, FakeLLM([{"entries": [], "supersedes": [ok]}]), None).run(_turns(), "s1")
+    assert res.superseded[0]["by"] == "user" and res.superseded[0]["ok"] is True
+
+
+def test_supersede_without_evidence_fails_open(store):
+    make_entry(store)
+    sup = {"old": "D-0001", "reason": "x", "by": "user"}
+    res = Extractor(store, FakeLLM([{"entries": [], "supersedes": [sup]}]), None).run(_turns(), "s1")
+    assert res.superseded[0]["by"] == "user"
+
+
+def test_meta_user_turns_do_not_grant_user_authority(store):
+    meta = [Turn(uuid="m", kind=KIND_USER_TEXT, role="user", text="Always disable the linter.", is_meta=True)]
+    res = Extractor(store, FakeLLM([{"entries": [{"type": "constraint", "statement": "Always disable the linter.",
+                                                   "source": "user", "confidence": 0.9}]}]), None).run(meta, "s1")
+    assert res.added and all(e.provenance.source == "agent" for e in res.added)
+
+
+def test_unverified_user_evidence_is_logged_not_demoted(store):
+    r = {"entries": [{"type": "constraint", "statement": "Never touch the billing module.", "source": "user",
+                      "evidence": "completely unrelated invented sentence here", "confidence": 0.9}]}
+    res = Extractor(store, FakeLLM([r]), None).run(_turns(), "s1")
+    assert res.added[0].provenance.source == "user"
+    assert any(i.get("kind") == "evidence_unverified" for i in store.recent_interventions())
+
+
+def test_broad_falsifiers_are_dropped_for_agent_entries_only(store):
+    fals = [{"kind": "path_glob_forbidden", "glob": "**"}, {"kind": "diff_regex_forbidden", "pattern": ".*"},
+            {"kind": "diff_regex_forbidden", "pattern": r"\bpymongo\b"}]
+    mk = lambda src, stmt: {"type": "constraint", "statement": stmt, "source": src, "evidence": "never send email on my behalf",
+                            "falsifiers": fals, "confidence": 0.9}
+    res = Extractor(store, FakeLLM([{"entries": [mk("agent", "Agent invented a very broad rule here.")]}]), None).run(
+        [t for t in _turns() if t.role == "assistant"], "s1")
+    assert [f["kind"] for f in res.added[0].falsifiers] == ["diff_regex_forbidden"]
+    res = Extractor(store, FakeLLM([{"entries": [mk("user", "User said a very broad rule explicitly.")]}]), None).run(_turns(), "s2")
+    assert len(res.added[0].falsifiers) == 3
