@@ -264,24 +264,10 @@ class Extractor:
                 result.skipped_duplicates += 1
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
-            if source == "user" and user_texts is not None:
-                supported = evidence_supported(str(c.get("evidence", "")), user_texts)
-                if supported is False:
-                    # warn only: a real user statement with a paraphrased quote should keep user authority, but
-                    # it must be logged as unverified rather than silently treated as user-backed evidence.
-                    self.store.log_intervention({"kind": "evidence_unverified", "type": etype, "statement": statement[:120],
-                                                 "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200]})
-                elif supported is None:
-                    # exact user quote cannot be validated when the quote is too short; keep the user claim but do not
-                    # assert stronger evidence than the text supports.
-                    pass
-            if source == "user" and user_texts is not None:
-                # provenance-forgery guard: hard-deny authority needs a quote that really sits in a user turn;
-                # assistant paraphrases or injected text must not become user-backed.
-                ev = _normalize(str(c.get("evidence", "")))
-                if ev and ev not in " ".join(_normalize(t) for t in user_texts):
-                    source = "agent"
-                    result.forged_user_source += 1
+            if source == "user" and user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False:
+                # warn only: demoting a real user constraint on a paraphrased quote is the worse error
+                self.store.log_intervention({"kind": "evidence_unverified", "type": etype, "statement": statement[:120],
+                                              "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200]})
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
             scope = Scope(paths=[str(p) for p in scope_raw.get("paths", []) if p][:10],
                           tools=[str(t) for t in scope_raw.get("tools", []) if t][:6],

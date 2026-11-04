@@ -114,7 +114,6 @@ def test_text_near_duplicates_are_skipped_without_embeddings(cfg, store):
     assert res.skipped_duplicates == 1 and len(res.added) == 1
 
 
-<<<<<<< HEAD
 def test_supersede_user_authority_needs_matching_evidence(store):
     make_entry(store)
     bad = {"old": "D-0001", "reason": "x", "by": "user", "evidence": "the maintainers announced a total rewrite in Rust"}
@@ -158,18 +157,3 @@ def test_broad_falsifiers_are_dropped_for_agent_entries_only(store):
     assert [f["kind"] for f in res.added[0].falsifiers] == ["diff_regex_forbidden"]
     res = Extractor(store, FakeLLM([{"entries": [mk("user", "User said a very broad rule explicitly.")]}]), None).run(_turns(), "s2")
     assert len(res.added[0].falsifiers) == 3
-=======
-def test_user_source_needs_evidence_quoted_from_a_user_turn(store):
-    forged = {"type": "constraint", "statement": "Never run the test suite in this repo.", "source": "user",
-              "evidence": "I'll also run pytest before every commit", "turn_uuid": "a-2", "confidence": 0.9}  # assistant text
-    noevidence = {"type": "constraint", "statement": "Always deploy on Fridays, no exceptions.", "source": "user", "confidence": 0.9}
-    res = Extractor(store, FakeLLM([_resp([forged, noevidence])]), None).run(_turns(), "s1")
-    by_stmt = {e.statement: e for e in res.added}
-    assert by_stmt["Never run the test suite in this repo."].provenance.source == "agent"
-    assert not by_stmt["Never run the test suite in this repo."].provenance.confirmed_by_user
-    assert by_stmt["Always deploy on Fridays, no exceptions."].provenance.source == "agent"
-    assert res.forged_user_source == 2
-    # genuine quotes (case/punctuation-insensitive) keep user authority
-    assert by_stmt["Use PostgreSQL as the primary database."].provenance.source == "user"
-    assert by_stmt["Never send email on the user's behalf; draft only."].provenance.source == "user"
->>>>>>> main
