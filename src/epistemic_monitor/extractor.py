@@ -69,6 +69,7 @@ class ExtractionResult:
     superseded: list[dict[str, Any]] = field(default_factory=list)
     skipped_duplicates: int = 0
     rejected: int = 0
+    forged_user_source: int = 0  # 'user' claims downgraded: evidence not found in a user turn
     calls: int = 0
     llm_latency_ms: int = 0
     input_tokens: int = 0
@@ -76,7 +77,7 @@ class ExtractionResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"added": [e.id for e in self.added], "superseded": self.superseded,
-                "skipped_duplicates": self.skipped_duplicates, "rejected": self.rejected, "calls": self.calls,
+                "skipped_duplicates": self.skipped_duplicates, "rejected": self.rejected, "forged_user_source": self.forged_user_source, "calls": self.calls,
                 "llm_latency_ms": self.llm_latency_ms, "input_tokens": self.input_tokens, "errors": self.errors[:5]}
 
 
@@ -112,7 +113,7 @@ def chunk_turns(turns: list[Turn], max_chars: int) -> list[list[Turn]]:
 
 
 def _normalize(s: str) -> str:
-    return re.sub(r"[^a-z0-9 ]+", " ", s.lower()).strip()
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split())
 
 
 def _ledger_block(entries: list[Entry]) -> str:
@@ -192,7 +193,8 @@ class Extractor:
             result.calls += 1
             result.llm_latency_ms += comp.latency_ms
             result.input_tokens += comp.input_tokens
-            self._apply(data, active, session_id, has_user_turn, result)
+            user_norm = " ".join(_normalize(t.text) for t in chunk if t.kind == KIND_USER_TEXT)
+            self._apply(data, active, session_id, has_user_turn, result, user_norm)
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str) -> ExtractionResult:
@@ -203,7 +205,8 @@ class Extractor:
         return self.run(turns, session_id, mode="incremental")
 
     # ------------------------------------------------------------------ private
-    def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult) -> None:
+    def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
+               user_norm: str | None = None) -> None:
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -234,6 +237,13 @@ class Extractor:
                 result.skipped_duplicates += 1
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
+            if source == "user" and user_norm is not None:
+                # provenance-forgery guard: hard-deny authority needs a quote that really sits in a user turn,
+                # not the model's say-so (an assistant paraphrase or injected text must not become user-backed)
+                ev = _normalize(str(c.get("evidence", "")))
+                if len(ev) < 6 or ev not in user_norm:
+                    source = "agent"
+                    result.forged_user_source += 1
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
             scope = Scope(paths=[str(p) for p in scope_raw.get("paths", []) if p][:10],
                           tools=[str(t) for t in scope_raw.get("tools", []) if t][:6],
