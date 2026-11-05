@@ -124,3 +124,17 @@ one Jev request per gated call and $0.042/M tokens they are below a cent per ses
   the `file` policy source at matrix scale, are the next runs.
 - Drift from the agent's own decisions (not user-stated) is not measured here; the extractor's
   ledger entries from assistant turns are exercised by `scripts/phase1_check.py` only.
+
+## Addendum (2026-11-04): write-time source support
+
+Sweep: MemTxn 2607.27834 (source-supported updates), MemForm 2610.14431 (formation poisoning), STALE, DreamBench-SWE.
+Two adversarial reviews narrowed the candidates. Shipped:
+
+- **Evidence support** (`extractor.evidence_supported`). `has_user_turn` is now per chunk and ignores `is_meta` rows.
+  A `by=user` supersession whose `evidence` quote shares <60% of its tokens with the raw user turns is downgraded to
+  agent authority (no evidence = fail open). A `source=user` entry with unmatched evidence is only logged
+  (`evidence_unverified`), never demoted. Known limit: pasted text inside a user turn still passes.
+- **Broad falsifiers** (`is_broad_falsifier`). Agent-sourced entries lose falsifiers like `**` or `.*`, which would
+  make the gate's verdict hard on almost any call. User-sourced entries keep theirs.
+- **Dropped:** order-invariance test (replay is deterministic over an append-only log), tool_result exclusion
+  (already filtered at extractor.py `run`), verbatim raw-turn memory (transcripts are already captured).
