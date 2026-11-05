@@ -21,7 +21,14 @@ def rank_entries(entries: list[Entry], dropped: set[str] | None = None) -> list[
 
 def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_entries: int = 25,
                   max_chars: int = 10000, title: str = "Active decisions (epistemic monitor)") -> str:
-    """Verbatim statements, user provenance first, dropped-by-compaction first,
+    return render_pinned_ex(entries, dropped, max_entries, max_chars, title)[0]
+
+
+def render_pinned_ex(entries: list[Entry], dropped: set[str] | None = None, max_entries: int = 25,
+                     max_chars: int = 10000, title: str = "Active decisions (epistemic monitor)"
+                     ) -> tuple[str, list[str]]:
+    """Like render_pinned, also returning the ids truncated out of the block (for auditing).
+    Verbatim statements, user provenance first, dropped-by-compaction first,
     bounded by entries and characters. Carries the authority line from
     Governance Decay §7 so in-stream text cannot claim to override it."""
     ranked = rank_entries(entries, dropped)
@@ -45,7 +52,8 @@ def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_ent
         shown += 1
     remaining = len(entries) - shown
     tail = [f"", f"{remaining} more; run `/ledger list` to see all."] if remaining > 0 else []
-    return "\n".join(head + body + tail).strip() + "\n"
+    omitted = [e.id for e in ranked[shown:]]
+    return "\n".join(head + body + tail).strip() + "\n", omitted
 
 
 def render_briefing(entries: list[Entry], orphaned: list[Entry], max_entries: int, max_chars: int) -> str:
