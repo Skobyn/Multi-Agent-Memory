@@ -377,3 +377,27 @@ def test_turn_check_ignores_agent_made_entries(cfg, store, monkeypatch):
     msg = "I committed the ace-workitems port with 12 units after the review. " * 3
     assert _run("stop", {"last_assistant_message": msg, "stop_hook_active": False}, cfg) is None
     assert _logged(cfg, "stop")[-1]["turn_check_skipped"] == "no user-made entries"
+
+
+def test_pin_block_survives_five_compactions_and_logs_truncation(cfg, store, monkeypatch):
+    for i in range(30):
+        make_entry(store, statement=f"Decision number {i} about module m{i}.", type="constraint")
+    store.close()
+    _offline(monkeypatch)
+    monkeypatch.setenv("EPISTEMIC_AUDIT_ENTAILMENT_CHECK", "false")
+    for _ in range(5):
+        _run("post_compact", {"trigger": "auto", "compact_summary": "nothing relevant"}, cfg)
+        pinned = cfg.pinned_path.read_text()
+        assert "C-0001" in pinned and "not overridable" in pinned
+    rec = _logged(cfg, "pin_truncated")[-1]
+    assert rec["active_entries"] == 30 and len(rec["omitted"]) == 5
+    assert "more; run `/ledger list`" in pinned
+
+
+def test_subagent_start_logs_omitted(cfg, store, monkeypatch):
+    for i in range(20):
+        make_entry(store, statement=f"Rule {i}.", type="constraint")
+    store.close()
+    _offline(monkeypatch)
+    _run("subagent_start", {"agent_type": "x"}, cfg)
+    assert len(_logged(cfg, "subagent_start")[-1]["omitted"]) == 5

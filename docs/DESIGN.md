@@ -697,3 +697,18 @@ and an adversarial review of each candidate. Both were narrowed on the reviewers
   It writes no events: a flag followed by a supersession is ambiguous, and auto-retiring would erode constraints.
 - **Not built:** TOKI judge-decision logging. Replay already applies stored events and never re-asks an LLM;
   a prompt hash would not make a CLI-provider judge deterministic.
+
+## Addendum (2026-11-05): pin-truncation observability
+
+Sweep: Compaction Cliff (2608.22752, type-routed retention, in-scope rules ahead of ranked results),
+Rate-Distortion compaction (2607.08032, repeated irreversible summarization compounds), Memory-Induced
+Tool-Drift (2605.24941). Three candidates were attacked by adversarial reviewers against the code:
+
+- **C3 scope guard for unscoped agent/summary entries: killed.** The gate already caps those at advisory unless a
+  falsifier trips (`gate.py` hard/advisory split); downgrading unscoped entries would weaken real enforcement.
+- **C2 drop-history escalation: killed.** Every compaction re-audits and re-pins all entries with dropped-first
+  ordering, so a drop count changes nothing. Salvaged only as a test: the pin block survives 5 sequential compactions.
+- **C1 task-conditioned pin selection: narrowed.** Truncation was never measured (bench ledgers are 4-12 entries
+  against a 25-entry cap), and the gate reads the full ledger, so a truncated pin cannot disable enforcement.
+  Built only the measurement: `pin_truncated` (compaction path) and `omitted` on `subagent_start` interventions list
+  ids cut by the entry/char caps. Build SubagentStart prompt-matched selection only if these logs show real truncation.
