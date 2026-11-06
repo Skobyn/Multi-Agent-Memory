@@ -90,6 +90,8 @@ def ledger(argv: list[str]) -> int:
     s_rt = sub.add_parser("retire", help="close entries without a replacement: by id, or every entry of a provenance")
     s_rt.add_argument("ids", nargs="*"); s_rt.add_argument("--provenance", choices=("agent", "user"), default=None)
     s_rt.add_argument("--reason", required=True); s_rt.add_argument("--by", choices=("user", "agent"), default="agent")
+    s_cf = sub.add_parser("confirm", help="user-only: promote an agent/summary entry to user authority (hard deny, user-only supersession)")
+    s_cf.add_argument("id")
     s_res = sub.add_parser("resolve", help="close a review item (orphaned or unknown_current)")
     s_res.add_argument("id"); g = s_res.add_mutually_exclusive_group(required=True)
     g.add_argument("--keep", action="store_true"); g.add_argument("--retire", action="store_true")
@@ -179,6 +181,11 @@ def ledger(argv: list[str]) -> int:
             if n:
                 write_pinned(cfg, store)
             print(f"retired {n}")
+        elif args.cmd == "confirm":
+            ok = store.confirm(args.id.upper(), by="user", session_id="cli")
+            if ok:
+                write_pinned(cfg, store)
+            print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
             ok = store.resolve(args.id.upper(), keep=bool(args.keep))
             if ok and args.keep:

@@ -65,6 +65,12 @@ class Entry:
     embedding_ref: str | None = None
     scope_fingerprint: dict[str, str] = field(default_factory=dict)  # path -> content hash when written (agent premises only)
 
+    @property
+    def user_authority(self) -> bool:
+        """True when the user made this entry or later confirmed it (``Store.confirm``): it then gets the
+        user's enforcement force and can only be superseded or retired by the user."""
+        return self.provenance.source == "user" or self.provenance.confirmed_by_user
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

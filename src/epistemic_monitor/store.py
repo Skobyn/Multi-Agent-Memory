@@ -198,7 +198,7 @@ class LedgerStore:
         e = self.get_entry(entry_id)
         if e is None or e.status == "retired":
             return False
-        if e.provenance.source == "user" and by != "user":
+        if e.user_authority and by != "user":
             self.log_intervention({"kind": "retire_refused", "entry": entry_id, "by": by, "reason": reason, "session_id": session_id})
             return False
         self._apply_event({"event": "status", "id": entry_id, "status": "retired", "reason": reason, "by": by, "session_id": session_id})
@@ -237,7 +237,7 @@ class LedgerStore:
         old = self.get_entry(old_id)
         if old is None:
             return False
-        if old.provenance.source == "user" and by != "user":
+        if old.user_authority and by != "user":
             self.log_intervention({"kind": "supersede_refused", "entry": old_id, "by": by,
                                    "reason": reason, "session_id": session_id})
             return False
@@ -266,6 +266,21 @@ class LedgerStore:
 
     def count_entries(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+
+    def confirm(self, entry_id: str, by: str, session_id: str = "") -> bool:
+        """Promote an active agent/summary entry to user authority (it then hard-denies like a user entry and is
+        protected by the authority rule). User-only: the agent endorsing its own entry would be a self-confidence
+        loop (DESIGN §8), so any other ``by`` is refused and logged. Never called automatically."""
+        e = self.get_entry(entry_id)
+        if e is None or e.status != "active" or e.user_authority:
+            return False
+        if by != "user":
+            self.log_intervention({"kind": "confirm_refused", "entry": entry_id, "by": by, "session_id": session_id})
+            return False
+        d = e.provenance.__dict__ | {"confirmed_by_user": True}
+        self._apply_event({"event": "entry_update", "id": e.id, "fields": {"provenance": d, "last_verified": now_iso()}})
+        self.log_intervention({"kind": "entry_confirmed", "entry": e.id, "by": by, "session_id": session_id})
+        return True
 
     def dependents_of(self, entry_id: str) -> list[Entry]:
         return [e for e in self.entries(None) if entry_id in e.depends_on]

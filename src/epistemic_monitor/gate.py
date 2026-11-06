@@ -513,7 +513,7 @@ class GatePipeline:
         citation = format_citation(by_id, trips_for_citation, (res.advisor or {}).get("next_step", ""))
         res.reason = citation
         enforce = bool(self.g.get("enforce", True))
-        user_backed = any(by_id[e].provenance.source == "user" for e in conflicts if e in by_id)
+        user_backed = any(by_id[e].user_authority for e in conflicts if e in by_id)
         tripped = {t.entry_id for t in res.trips}
         hard = user_backed or bool(tripped & conflicts)
         denies = int(self.store.get_state(session_id, "denies", 0) or 0)
