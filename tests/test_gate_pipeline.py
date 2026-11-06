@@ -2,7 +2,7 @@ from fakes import FakeDM, FakeLLM
 from helpers import make_entry
 
 from epistemic_monitor.calibration import Calibration
-from epistemic_monitor.gate import GatePipeline, change_from_tool_input, run_tier0, structural_signals
+from epistemic_monitor.gate import GatePipeline, GateResult, change_from_tool_input, run_tier0, structural_signals
 
 
 def _pg(store, **kw):
@@ -175,3 +175,26 @@ def test_first_write_briefing_does_not_start_advisor_cooldown(cfg, store):
     res = pipe.evaluate("Edit", _edit("import pymongo"), "s1", history=[prior])
     assert len(llm.calls) == 2 and res.advisor["verdict"] == "conflict" and res.decision == "deny"
     assert not any("cooldown" in n for n in res.notes)
+
+
+def test_confirm_promotes_agent_entry_user_only(cfg, store):
+    e = make_entry(store, source="agent", confirmed=False, statement="Keep the cache in Redis.",
+                   scope={"paths": ["src/z/*"]}, falsifiers=[])
+    # advisory-vs-deny hinges on provenance; exercise the decision directly with a model-style conflict
+    pipe = GatePipeline(store, cfg, dm=None, llm=None)
+    r = pipe._decide(GateResult(change_from_tool_input("Edit", _edit("x", "src/z/a.py"), str(cfg.cwd))), {e.id: e}, {e.id}, "s9", [])
+    assert r.decision == "advisory"
+    # the agent cannot promote its own entry, and the refusal is logged
+    assert store.confirm(e.id, by="agent") is False
+    assert store.get_entry(e.id).provenance.confirmed_by_user is False
+    assert any(i.get("kind") == "confirm_refused" for i in store.recent_interventions(10))
+    assert store.confirm(e.id, by="user") is True
+    promoted = store.get_entry(e.id)
+    r = pipe._decide(GateResult(change_from_tool_input("Edit", _edit("x", "src/z/a.py"), str(cfg.cwd))), {e.id: promoted}, {e.id}, "s10", [])
+    assert r.decision == "deny"
+    # promoted entry is now protected by the authority rule, and confirming twice is a no-op
+    assert store.supersede(e.id, None, "agent changed mind", by="agent") is False
+    assert store.confirm(e.id, by="user") is False
+    # survives a rebuild from the event log
+    store.rebuild_from_events()
+    assert store.get_entry(e.id).provenance.confirmed_by_user is True

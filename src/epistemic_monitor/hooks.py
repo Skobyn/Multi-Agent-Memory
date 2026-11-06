@@ -197,7 +197,7 @@ def _turn_check(cfg: Config, store: LedgerStore, text: str, record: dict[str, An
     """Ask the decision model whether `text` contradicts an entry the user made; block with the entry list if so.
     Agent-made entries (premises, the agent's own plans) never block a reply: they go stale, and provenance decides
     force (INTENT principle 6)."""
-    active = [e for e in store.active_entries() if e.provenance.source == "user"]
+    active = [e for e in store.active_entries() if e.user_authority]
     if not active:
         record["turn_check_skipped"] = "no user-made entries"
         return None
