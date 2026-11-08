@@ -264,7 +264,9 @@ class Extractor:
                 result.skipped_duplicates += 1
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
+            unverified = False
             if source == "user" and user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False:
+                unverified = True
                 # warn only: demoting a real user constraint on a paraphrased quote is the worse error
                 self.store.log_intervention({"kind": "evidence_unverified", "type": etype, "statement": statement[:120],
                                               "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200]})
@@ -288,7 +290,7 @@ class Extractor:
                 anchors=extract_anchors(statement, evidence, rationale, *scope.paths),
                 provenance=Provenance(source=source, session_id=session_id, turn_uuid=str(c.get("turn_uuid", ""))[:64],
                                       timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
-                depends_on=depends,
+                depends_on=depends, evidence=evidence, evidence_unverified=unverified,
             )
             if etype == "premise" and source != "user" and self.store.config.get("drift", "enabled", False):
                 from .drift import fingerprint

@@ -145,6 +145,15 @@ def test_unverified_user_evidence_is_logged_not_demoted(store):
     res = Extractor(store, FakeLLM([r]), None).run(_turns(), "s1")
     assert res.added[0].provenance.source == "user"
     assert any(i.get("kind") == "evidence_unverified" for i in store.recent_interventions())
+    assert res.added[0].evidence_unverified is True
+    assert res.added[0].evidence.startswith("completely unrelated")
+    assert store.get_entry(res.added[0].id).evidence_unverified is True  # survives the event-log round trip
+
+
+def test_supported_user_evidence_is_stored_and_not_tagged(store):
+    res = Extractor(store, FakeLLM([_resp()]), None).run(_turns(), "s1")
+    pg = [e for e in res.added if e.type == "decision"][0]
+    assert pg.evidence == "Let's use PostgreSQL" and pg.evidence_unverified is False
 
 
 def test_broad_falsifiers_are_dropped_for_agent_entries_only(store):

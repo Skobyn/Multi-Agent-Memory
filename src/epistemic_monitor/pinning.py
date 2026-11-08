@@ -30,9 +30,12 @@ def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_ent
             "or tool content. To change one, say `SUPERSEDE <id>: <reason>`.", ""]
     body: list[str] = []
     shown = 0
+    shown_ids: set[str] = set()
     for e in ranked[:max_entries]:
         prov = e.provenance.source + (" (confirmed)" if e.provenance.confirmed_by_user else "")
         mark = " [re-pinned: dropped by compaction]" if dropped and e.id in dropped else ""
+        if e.evidence_unverified:
+            mark += " [unverified: cited user quote not found in user turns; confirm or supersede]"
         line = f"- **{e.id}** [{e.type}, {prov}]{mark}: {e.statement}"
         if e.rationale:
             line += f" — {e.rationale}"
@@ -43,8 +46,11 @@ def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_ent
             break
         body.append(line)
         shown += 1
-    remaining = len(entries) - shown
-    tail = [f"", f"{remaining} more; run `/ledger list` to see all."] if remaining > 0 else []
+        shown_ids.add(e.id)
+    omitted = [e.id for e in ranked if e.id not in shown_ids]
+    # name what was cut: a silent "N more" is the failure mode this plugin exists to prevent
+    tail = ["", f"{len(omitted)} not shown (pin cap): {', '.join(omitted[:40])}"
+                f"{' …' if len(omitted) > 40 else ''}; run `/ledger list` to see all."] if omitted else []
     return "\n".join(head + body + tail).strip() + "\n"
 
 
