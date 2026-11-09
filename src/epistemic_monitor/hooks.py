@@ -25,7 +25,7 @@ from .extractor import Extractor
 from .calibration import load_calibration
 from .gate import GatePipeline
 from .llm import make_llm
-from .pinning import render_briefing, render_pinned
+from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
 from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, read_turns, rows_to_turns
 
@@ -267,7 +267,10 @@ def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
 
 def write_pinned(cfg: Config, store: LedgerStore, dropped: set[str] | None = None) -> str:
     active = store.active_entries()
-    pinned = render_pinned(active, dropped, cfg.get("pinning", "max_entries", 25), cfg.get("pinning", "max_chars", 10000))
+    pinned, omitted = render_pinned_ex(active, dropped, cfg.get("pinning", "max_entries", 25),
+                                       cfg.get("pinning", "max_chars", 10000))
+    if omitted and dropped is not None:  # only on the compaction path, so CLI edits do not spam the log
+        store.log_intervention({"kind": "pin_truncated", "omitted": omitted, "active_entries": len(active)})
     cfg.pinned_path.write_text(pinned, encoding="utf-8")
     if cfg.get("pinning", "mirror_memory_md", True):
         _mirror_memory_md(cfg, pinned)
@@ -508,12 +511,13 @@ def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, 
 # ---------------------------------------------------------------- subagents
 def subagent_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     active = store.active_entries()
+    text, omitted = render_pinned_ex(active, None, 15, 3000, title="Project decisions you must honor")
     store.log_intervention({"kind": "subagent_start", "session_id": _session(payload),
-                            "agent_type": payload.get("agent_type"), "active_entries": len(active)})
+                            "agent_type": payload.get("agent_type"), "active_entries": len(active),
+                            "omitted": omitted})
     if not active:
         return None
-    return hooklib.additional_context("subagent_start", render_pinned(active, None, 15, 3000,
-                                                                      title="Project decisions you must honor"))
+    return hooklib.additional_context("subagent_start", text)
 
 
 def subagent_stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
