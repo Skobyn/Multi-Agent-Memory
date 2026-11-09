@@ -36,6 +36,7 @@ class Provenance:
     timestamp: str = field(default_factory=now_iso)
     confirmed_by_user: bool = False
     extraction_confidence: float = 0.0
+    evidence: str = ""  # verbatim quote the extractor cited (<=500 chars); lets a reviewer spot a forged 'user' entry
 
 
 @dataclass

@@ -278,6 +278,8 @@ def format_citation(entries_by_id: dict[str, Entry], trips: list[Trip], next_ste
             continue
         prov = f"{e.provenance.source} decision" + (", confirmed by user" if e.provenance.confirmed_by_user else "")
         lines.append(f"- {e.id} ({prov}): \"{e.statement}\" — {t.detail}")
+        if e.provenance.source == "user" and e.provenance.evidence:
+            lines.append(f"  user said: \"{e.provenance.evidence[:200]}\"")
     if next_step:
         lines.append(f"Suggested next step: {next_step}")
     lines.append("Either revise the change, or supersede explicitly by replying with "

@@ -287,7 +287,8 @@ class Extractor:
                 scope=scope, falsifiers=falsifiers,
                 anchors=extract_anchors(statement, evidence, rationale, *scope.paths),
                 provenance=Provenance(source=source, session_id=session_id, turn_uuid=str(c.get("turn_uuid", ""))[:64],
-                                      timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
+                                      timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf,
+                                      evidence=evidence),
                 depends_on=depends,
             )
             if etype == "premise" and source != "user" and self.store.config.get("drift", "enabled", False):

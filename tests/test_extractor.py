@@ -157,3 +157,16 @@ def test_broad_falsifiers_are_dropped_for_agent_entries_only(store):
     assert [f["kind"] for f in res.added[0].falsifiers] == ["diff_regex_forbidden"]
     res = Extractor(store, FakeLLM([{"entries": [mk("user", "User said a very broad rule explicitly.")]}]), None).run(_turns(), "s2")
     assert len(res.added[0].falsifiers) == 3
+
+
+def test_user_evidence_is_persisted_and_shown(store):
+    from epistemic_monitor.gate import Trip, format_citation
+    from epistemic_monitor.pinning import render_pinned
+    Extractor(store, FakeLLM([_resp()]), None).run(_turns(), "s1", mode="full")
+    d = store.get_entry("D-0001")
+    assert d.provenance.evidence == "Let's use PostgreSQL"
+    cite = format_citation({d.id: d}, [Trip(entry_id=d.id, kind="falsifier", detail="x")])
+    assert 'user said: "Let\'s use PostgreSQL"' in cite
+    assert 'user said: "Let\'s use PostgreSQL"' in render_pinned([d])
+    agent = store.get_entry("R-0001")
+    assert "user said" not in render_pinned([agent])

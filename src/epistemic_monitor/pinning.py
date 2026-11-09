@@ -36,6 +36,8 @@ def render_pinned(entries: list[Entry], dropped: set[str] | None = None, max_ent
         line = f"- **{e.id}** [{e.type}, {prov}]{mark}: {e.statement}"
         if e.rationale:
             line += f" — {e.rationale}"
+        if e.provenance.source == "user" and e.provenance.evidence:
+            line += f' (user said: "{e.provenance.evidence[:120]}")'
         if e.scope.paths:
             line += f" (scope: {', '.join(e.scope.paths)})"
         candidate = "\n".join(head + body + [line])
