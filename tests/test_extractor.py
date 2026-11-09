@@ -157,3 +157,12 @@ def test_broad_falsifiers_are_dropped_for_agent_entries_only(store):
     assert [f["kind"] for f in res.added[0].falsifiers] == ["diff_regex_forbidden"]
     res = Extractor(store, FakeLLM([{"entries": [mk("user", "User said a very broad rule explicitly.")]}]), None).run(_turns(), "s2")
     assert len(res.added[0].falsifiers) == 3
+
+
+def test_unverified_user_evidence_demotes_non_constraint_types(store):
+    r = {"entries": [{"type": "decision", "statement": "Use Redis for the session cache.", "source": "user",
+                      "evidence": "completely unrelated invented sentence here", "confidence": 0.9}]}
+    res = Extractor(store, FakeLLM([r]), None).run(_turns(), "s1")
+    assert res.added[0].provenance.source == "agent"
+    assert res.added[0].provenance.confirmed_by_user is False
+    assert any(i.get("kind") == "evidence_unverified" and i.get("demoted") for i in store.recent_interventions())

@@ -265,9 +265,15 @@ class Extractor:
                 continue
             source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
             if source == "user" and user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False:
-                # warn only: demoting a real user constraint on a paraphrased quote is the worse error
+                # The claimed user quote matches nothing the user typed. Constraints and process steps stay
+                # user-sourced (a wrongly demoted real constraint is the worse error; a spurious one only
+                # restricts the agent), logged for review. Other types lose user authority, as supersession does.
+                demote = etype not in ("constraint", "process")
                 self.store.log_intervention({"kind": "evidence_unverified", "type": etype, "statement": statement[:120],
-                                              "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200]})
+                                              "session_id": session_id, "evidence": str(c.get("evidence", ""))[:200],
+                                              "demoted": demote})
+                if demote:
+                    source = "agent"
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
             scope = Scope(paths=[str(p) for p in scope_raw.get("paths", []) if p][:10],
                           tools=[str(t) for t in scope_raw.get("tools", []) if t][:6],
