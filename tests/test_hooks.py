@@ -401,3 +401,18 @@ def test_subagent_start_logs_omitted(cfg, store, monkeypatch):
     _offline(monkeypatch)
     _run("subagent_start", {"agent_type": "x"}, cfg)
     assert len(_logged(cfg, "subagent_start")[-1]["omitted"]) == 5
+
+
+def test_post_compact_logs_stale_resurrection_candidates(cfg, store, monkeypatch):
+    make_entry(store, statement="Use MongoDB.", anchors=["MongoDB", "database"])          # D-0001, will be superseded
+    make_entry(store, statement="Use PostgreSQL.", anchors=["PostgreSQL", "database"])    # D-0002
+    assert store.supersede("D-0001", "D-0002", "switched", by="user")
+    store.close()
+    _offline(monkeypatch)
+    monkeypatch.setenv("EPISTEMIC_AUDIT_ENTAILMENT_CHECK", "false")
+    _run("post_compact", {"trigger": "auto", "compact_summary": "We chose PostgreSQL for the database."}, cfg)
+    assert _logged(cfg, "compaction_audit")[-1]["stale_resurrected_candidate"] == []      # shared anchor 'database' is ignored
+    _run("post_compact", {"trigger": "auto", "compact_summary": "We are using MongoDB."}, cfg)
+    rec = _logged(cfg, "compaction_audit")[-1]
+    assert rec["stale_resurrected_candidate"] == ["D-0001"]
+    assert "MongoDB" not in cfg.pinned_path.read_text()                                    # log-only: pin block untouched
