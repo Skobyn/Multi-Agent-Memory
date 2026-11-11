@@ -95,6 +95,12 @@ def run(event: str, handler: Handler, payload: dict[str, Any] | None = None, std
         cfg = load_config(payload.get("cwd"))
         store = LedgerStore(cfg)
         output = handler(payload, cfg, store)
+        if store.dirty and event != "post_compact":
+            # A supersede, retirement or new entry made inside a hook must reach pinned.md and the MEMORY.md
+            # mirror now, not at the next compaction: a revoked entry left there is still read as binding
+            # (2609.08258). PostCompact writes the block itself, with the audit's dropped set.
+            from .hooks import write_pinned
+            write_pinned(cfg, store)
     except Exception:  # noqa: BLE001 - containment by design
         error = traceback.format_exc()[-2000:]
     finally:

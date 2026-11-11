@@ -57,3 +57,16 @@ def test_capture_round_trip(tmp_path):
 def test_capture_missing_source_is_harmless(tmp_path):
     out = capture_transcript(tmp_path / "nope.jsonl", tmp_path / "t", "x")
     assert not out.exists()
+
+
+def test_origin_marks_harness_written_user_rows():
+    from epistemic_monitor.transcript import rows_to_turns
+    def turn(**row):
+        return rows_to_turns({"type": "user", "uuid": "u", "message": {"content": row.pop("text", "do the thing please")}, **row})[0]
+    assert turn().is_human
+    assert not turn(origin={"kind": "peer", "from": "a1"}).is_human
+    assert not turn(origin={"kind": "task-notification", "producer": "session-task"}).is_human
+    assert turn(origin={"kind": "task-notification", "subkind": "scheduled-trigger"}).is_human   # a routine's stored prompt
+    assert turn(origin={"kind": "something-new"}).is_human                                       # fail open
+    assert not turn(isMeta=True).is_human
+    assert not turn(text="<system-reminder>\nnote\n</system-reminder>").is_human

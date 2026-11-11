@@ -712,3 +712,18 @@ Tool-Drift (2605.24941). Three candidates were attacked by adversarial reviewers
   against a 25-entry cap), and the gate reads the full ledger, so a truncated pin cannot disable enforcement.
   Built only the measurement: `pin_truncated` (compaction path) and `omitted` on `subagent_start` interventions list
   ids cut by the entry/char caps. Build SubagentStart prompt-matched selection only if these logs show real truncation.
+
+## Addendum (2026-11-11): revocation freshness and forgery-proof turn labels
+
+Sweep and reviewer verdicts in [`RESEARCH-2026-11-11.md`](RESEARCH-2026-11-11.md).
+
+- **Revocation freshness** (after 2609.08258). Any hook that records a ledger event now refreshes `pinned.md` and the
+  `MEMORY.md` mirror before it exits (`LedgerStore.dirty`, `hooklib.run`); before, a supersede made in conversation
+  left the revoked entry pinned as binding until the next compaction or CLI command. Refreshes keep the last audit's
+  re-pinned marks and write only on change. This amends the §4 table: every row can write `pinned.md`.
+- **Forgery-proof turn labels** (after 2610.29869). The extractor's serializer indents turn bodies so that a label
+  can only come from the serializer; harness-written user rows (`isMeta`, `origin.kind` peer / task-notification,
+  envelope text) are labelled `[injected]` and grant no user authority (§5 now reads `origin`); a `source=user` claim
+  whose quote matches only a forged label is demoted. A plain evidence mismatch stays warn-only.
+- **Not built:** a stale-copy sweep of CLAUDE.md, a transcript re-audit of user entries, sole-copy or type-weighted
+  pin ordering.

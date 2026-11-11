@@ -39,6 +39,7 @@ def cosine(a: list[float], b: list[float]) -> float:
 class LedgerStore:
     def __init__(self, config: Config) -> None:
         self.config = config
+        self.dirty = False  # set when this process records a ledger event (see hooklib.run)
         config.ensure_dirs()
         self._conn = sqlite3.connect(str(config.index_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -110,6 +111,7 @@ class LedgerStore:
         kind = ev.get("event")
         if record:
             self._append_event(ev)
+            self.dirty = True  # ledger changed in this process: pinned.md and the MEMORY.md mirror are stale
         if kind == "entry_add":
             self._upsert(Entry.from_dict(ev["entry"]))
         elif kind == "entry_update":

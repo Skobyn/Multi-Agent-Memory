@@ -258,7 +258,7 @@ def _extract_one_capture(cfg, store, path: str, session_id: str, budget: float) 
     ok = ex is not None and not res.get("errors")
     if ok and stats.last_uuid:
         store.set_watermark(session_id, stats.last_uuid)
-    if res.get("added"):
+    if store.dirty:
         write_pinned(cfg, store)
     store.log_intervention({"kind": "background_extraction", "source": "capture", "session_id": session_id,
                             "file": path, "new_turns": len(turns), "extraction": res, "complete": ok})
@@ -348,7 +348,7 @@ def extract_text(argv: list[str]) -> int:
             ex = _extractor_for(cfg, store, args.budget)
             res = ex.run([Turn(uuid="", kind=kind, role=args.role, text=text)], args.session, mode="incremental").to_dict() \
                 if ex else {"skipped": "no extractor"}
-            if res.get("added"):
+            if store.dirty:
                 write_pinned(cfg, store)
             store.log_intervention({"kind": "background_extraction", "source": f"stop:{args.role}", "session_id": args.session,
                                     "chars": len(text), "extraction": res})
