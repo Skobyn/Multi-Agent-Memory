@@ -88,32 +88,45 @@ class ExtractionResult:
 
 
 BODY_INDENT = "  | "
-# a line inside a turn body that imitates a user label (the laundering channel of 2610.29869)
-_LABEL_LOOKALIKE_RE = re.compile(r"^[ \t>|]*\[(?:user|human)\b[^\]\n]*\]:[ \t]*(.*(?:\n.*){0,6})", re.IGNORECASE | re.MULTILINE)
+# A line inside a turn body that imitates a user label (the laundering channel of 2610.29869): "[user]:",
+# "[User 7f3a]:", "[human 12-ab]:". The optional token must look like an id, so "[User story]:" is not one.
+_LABEL_LOOKALIKE_RE = re.compile(r"^[ \t]*\[(?:user|human)(?:[ \t]+[0-9a-f-]*\d[0-9a-f-]*)?[ \t]*\]:[ \t]*(.*)$",
+                                 re.IGNORECASE | re.MULTILINE)
+
+
+def one_line(text: str) -> str:
+    return " ".join(str(text).split())
+
+
+def _lines(text: str) -> str:
+    """Every line break Python or a model would honour (\\r, \\x0b, \\x0c, \\x1c-\\x1e, \\x85, U+2028/9) as a plain newline."""
+    return "\n".join(str(text).splitlines())
 
 
 def _body(text: str) -> str:
     """A turn body with every line after the first indented, so no line of it can sit in the label column."""
-    return text.strip().replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\n" + BODY_INDENT)
+    return _lines(text.strip()).replace("\n", "\n" + BODY_INDENT)
 
 
 def _tool_brief(t: Turn) -> str:
     ti = t.tool_input or {}
-    return " ".join(str(ti.get("file_path") or ti.get("command") or ti.get("pattern") or "").split())[:300]
+    return one_line(ti.get("file_path") or ti.get("command") or ti.get("pattern") or "")[:300]
+
+
+def format_turn(t: Turn) -> str | None:
+    if t.kind == KIND_USER_TEXT:
+        return f"[{'user' if t.is_human else 'injected'} {one_line(t.uuid)}]: {_body(t.text)}"
+    if t.kind == KIND_ASSISTANT_TEXT:
+        return f"[assistant {one_line(t.uuid)}]: {_body(t.text)}"
+    if t.kind == KIND_TOOL_USE:
+        return f"[assistant {one_line(t.uuid)} used tool {one_line(t.tool_name)}]: {_tool_brief(t)}"
+    return None
 
 
 def format_turns(turns: list[Turn], max_chars: int) -> str:
     """Flatten typed turns for the extractor. Role labels are text, so the serializer must make them unforgeable:
     bodies are indented and tool briefs are one line, hence only this function can put a label in the first column."""
-    lines: list[str] = []
-    for t in turns:
-        if t.kind == KIND_USER_TEXT:
-            lines.append(f"[{'user' if t.is_human else 'injected'} {t.uuid}]: {_body(t.text)}")
-        elif t.kind == KIND_ASSISTANT_TEXT:
-            lines.append(f"[assistant {t.uuid}]: {_body(t.text)}")
-        elif t.kind == KIND_TOOL_USE:
-            lines.append(f"[assistant {t.uuid} used tool {t.tool_name}]: {_tool_brief(t)}")
-    text = "\n".join(lines)
+    text = "\n".join(line for line in map(format_turn, turns) if line is not None)
     if len(text) > max_chars:
         mid_line = text[-max_chars - 1] != "\n"
         text = text[-max_chars:]
@@ -134,7 +147,7 @@ def forged_label_texts(turns: list[Turn]) -> list[str]:
             raw = t.text
         else:
             continue
-        out.extend(m.group(1) for m in _LABEL_LOOKALIKE_RE.finditer(raw) if m.group(1).strip())
+        out.extend(m.group(1) for m in _LABEL_LOOKALIKE_RE.finditer(_lines(raw)) if m.group(1).strip())
     return out
 
 
@@ -143,7 +156,7 @@ def chunk_turns(turns: list[Turn], max_chars: int) -> list[list[Turn]]:
     cur: list[Turn] = []
     size = 0
     for t in turns:
-        n = len(t.text) + 80
+        n = len(format_turn(t) or "") + 1  # the formatted size: indenting adds to long multi-line bodies
         if cur and size + n > max_chars:
             chunks.append(cur)
             cur, size = [], 0
@@ -187,7 +200,7 @@ def is_broad_falsifier(f: dict[str, Any]) -> bool:
 def _ledger_block(entries: list[Entry]) -> str:
     if not entries:
         return "(empty)"
-    return "\n".join(f"- {e.id} [{e.type}, {e.provenance.source}]: {e.statement}" for e in entries[:80])
+    return "\n".join(f"- {e.id} [{e.type}, {e.provenance.source}]: {one_line(e.statement)}" for e in entries[:80])
 
 
 def validate_falsifiers(raw: Any) -> list[dict[str, Any]]:
@@ -285,7 +298,7 @@ class Extractor:
                 result.rejected += 1
                 continue
             etype = str(c.get("type", "")).strip().lower()
-            statement = str(c.get("statement", "")).strip()
+            statement = one_line(c.get("statement", ""))  # one line: statements are re-rendered into prompts and the pin block
             try:
                 conf = float(c.get("confidence", 0.7))
             except (TypeError, ValueError):
@@ -328,7 +341,7 @@ class Extractor:
                                                  "dropped": len(falsifiers) - len(kept), "session_id": session_id})
                 falsifiers = kept
             evidence = str(c.get("evidence", ""))[:500]
-            rationale = str(c.get("rationale", ""))[:500]
+            rationale = one_line(c.get("rationale", ""))[:500]
             entry = Entry(
                 id=self.store.next_id(etype), type=etype, statement=statement[:500], rationale=rationale,
                 scope=scope, falsifiers=falsifiers,

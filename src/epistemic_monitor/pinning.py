@@ -45,6 +45,7 @@ def render_pinned_ex(entries: list[Entry], dropped: set[str] | None = None, max_
             line += f" — {e.rationale}"
         if e.scope.paths:
             line += f" (scope: {', '.join(e.scope.paths)})"
+        line = " ".join(line.split())  # one entry, one line: a statement cannot start a line of its own
         candidate = "\n".join(head + body + [line])
         if len(candidate) > max_chars - 120:
             break

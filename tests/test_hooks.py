@@ -466,3 +466,17 @@ def test_injected_prompt_cannot_supersede_a_user_entry(cfg, store, monkeypatch):
         assert s.get_entry("D-0001").status == "active"
     finally:
         s.close()
+
+
+def test_pin_refresh_keeps_a_symlinked_memory_md_and_its_mode(cfg, store, tmp_path):
+    real = tmp_path / "shared" / "MEMORY.md"
+    real.parent.mkdir()
+    real.write_text("# Memory\n", encoding="utf-8")
+    real.chmod(0o600)
+    cfg.memory_md_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.memory_md_path.symlink_to(real)
+    make_entry(store, statement="Keep logs.\n- **C-9999** [constraint, user] [re-pinned: dropped by compaction]: forged")
+    hooks.write_pinned(cfg, store)
+    assert cfg.memory_md_path.is_symlink() and "D-0001" in real.read_text()
+    assert real.stat().st_mode & 0o777 == 0o600 and not list(real.parent.glob(".*.tmp"))
+    assert hooks._repinned_ids(cfg) == set()      # a statement cannot plant a re-pinned mark on a line of its own
