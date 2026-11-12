@@ -712,3 +712,15 @@ Tool-Drift (2605.24941). Three candidates were attacked by adversarial reviewers
   against a 25-entry cap), and the gate reads the full ledger, so a truncated pin cannot disable enforcement.
   Built only the measurement: `pin_truncated` (compaction path) and `omitted` on `subagent_start` interventions list
   ids cut by the entry/char caps. Build SubagentStart prompt-matched selection only if these logs show real truncation.
+
+## Addendum (2026-11-12): revoked entries stay revoked
+
+Sweep and triage: [`RESEARCH-2026-11-12.md`](RESEARCH-2026-11-12.md).
+
+- **Resurrection guard** (`extractor.py` `_revoked_match`, `store.py` `revoked_by_user`, `Entry.revoked_by`).
+  A non-user restatement of an entry the user revoked is dropped and logged as `resurrection_blocked`.
+  Only a user-sourced candidate with evidence in a user turn can re-make it.
+- **Polarity-aware dedup** (`schema.has_negation`). Text, embedding and `ledger dedupe` matching no longer
+  treat "Use X" and "Never use X" as the same statement.
+- **`dedup_discarded_user_claim`**. Logged when a user-sourced candidate exactly duplicates an advisory
+  agent entry; `ledger feedback` prints these as `confirm` candidates. Nothing is promoted automatically.

@@ -209,6 +209,11 @@ def ledger(argv: list[str]) -> int:
                 print(f"review   {r['entry']}  flagged {r['flags']}x, then superseded by the user")
             for r in rep["tighten"]:
                 print(f"tighten  {r['entry']}  {r['labeled_ok']}/{r['flags']} flags labeled ok (loosen its scope or falsifier)")
+            for r in rep["confirm_candidates"]:
+                e = store.get_entry(r["entry"])
+                if e is not None and e.status == "active" and not e.user_authority:
+                    print(f"confirm  {r['entry']}  the user appears to have restated this advisory entry {r['restated']}x; "
+                          f"if you meant it, run: em ledger confirm {r['entry']}")
             if not any(rep.values()):
                 print("(no feedback signals yet; label flagged calls with: em ledger label <tool_use_id> conflict|ok)")
         elif args.cmd == "review":
