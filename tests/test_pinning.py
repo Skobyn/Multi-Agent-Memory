@@ -50,3 +50,12 @@ def test_unverified_user_entry_is_marked_but_still_pinned():
     e.evidence_unverified = True
     text = render_pinned([e])
     assert "**C-0001**" in text and "[unverified" in text
+
+
+def test_confirmed_constraint_joins_the_hard_tier(store):
+    for i in range(4):
+        make_entry(store, type="decision", statement=f"Filler decision {i}. " + "x" * 200)
+    c = make_entry(store, type="constraint", statement="Never edit vendored code.", source="agent", confirmed=False)
+    assert "Never edit vendored code." not in render_pinned(store.active_entries(), None, max_entries=1)
+    assert store.confirm(c.id, by="user")
+    assert "Never edit vendored code." in render_pinned(store.active_entries(), None, max_entries=1)

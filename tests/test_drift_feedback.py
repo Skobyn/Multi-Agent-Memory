@@ -35,6 +35,14 @@ def test_drift_never_touches_user_entries(store, cfg):
     assert store.get_entry(e.id).status == "active"
 
 
+def test_drift_never_touches_confirmed_entries(store, cfg):
+    e = _premise(store, cfg.cwd)
+    assert store.confirm(e.id, by="user")
+    (cfg.cwd / "a.py").write_text("changed")
+    assert drift_check(store, cfg.cwd) == []
+    assert store.get_entry(e.id).status == "active"
+
+
 def test_feedback_report_is_read_only_signal():
     gates = [{"kind": "gate", "flagged": ["D-0001"], "tool_use_id": f"t{i}"} for i in range(3)]
     ivs = gates + [{"kind": "supersede", "entry": "D-0001", "by": "user", "ok": True}]

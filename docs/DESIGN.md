@@ -820,3 +820,11 @@ Sweep and triage: [`RESEARCH-2026-11-12.md`](RESEARCH-2026-11-12.md).
   treat "Use X" and "Never use X" as the same statement.
 - **`dedup_discarded_user_claim`**. Logged when a user-sourced candidate exactly duplicates an advisory
   agent entry; `ledger feedback` prints these as `confirm` candidates. Nothing is promoted automatically.
+
+## Addendum (2026-11-13): authority-preserving invalidation
+
+From a MemoryDojo (2611.09721) poisoning review (`docs/RESEARCH-2026-11-13.md`): the §3 cascade (dependents ->
+`orphaned`, same-scope -> `unknown_current`) now touches user-authority entries only for a `by=user`
+supersession; skipped ids are logged as `cascade_skipped`. `resolve --retire`, like `retire` and `supersede`, needs
+`by=user` for a user-authority entry; bulk `retire --provenance user` is refused; `dedupe` keeps the
+user-authority member of a group. Drift skips confirmed premises, not only `source=user` ones.
