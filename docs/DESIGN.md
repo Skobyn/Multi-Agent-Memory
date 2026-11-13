@@ -712,3 +712,24 @@ Tool-Drift (2605.24941). Three candidates were attacked by adversarial reviewers
   against a 25-entry cap), and the gate reads the full ledger, so a truncated pin cannot disable enforcement.
   Built only the measurement: `pin_truncated` (compaction path) and `omitted` on `subagent_start` interventions list
   ids cut by the entry/char caps. Build SubagentStart prompt-matched selection only if these logs show real truncation.
+
+## Addendum (2026-11-08): two narrowed ideas from a second literature sweep
+
+Sweep of the last 30 days (ARCBench 2611.03223, MemUse 2611.01718, Delivery-Not-Storage 2607.20972, Σ-Mem
+2607.27958, OpenWiki, MemHarmBench 2611.01700; secondary digests, numbers unchecked). Four candidates went to
+adversarial review; two were killed outright, two narrowed.
+
+- **Built: visible pin drops.** When the pin cap trims, the tail names the omitted ids instead of "N more", so no
+  drop is silent.
+- **Built: stored evidence + `[unverified]` tag.** `Entry.evidence` keeps the cited quote; a `source=user` entry whose
+  quote matches nothing in the user turns gets `evidence_unverified` and a tag in the pin block. Enforcement and
+  authority are unchanged (demoting a real user constraint on a paraphrase is the worse error).
+- **Killed: prompt-time override guard (ARCBench).** `UserPromptSubmit` is async so context cannot reach this turn;
+  pin and gate already measure 0% on hard triggers; the bench has no multi-turn cell that could show headroom.
+  Prerequisite if revisited: a "rule in turn 1, violating request in turn 2" bench cell where pin or gate fail.
+- **Killed: delivery-utilization telemetry / relevance-gated pinning (MemUse).** "Touched" mis-scores constraints
+  (obeying means zero touches), and relevance trimming risks silent drops.
+- **Killed: per-source reliability priors (Σ-Mem).** Ledgers have single-digit samples per source×type, and a learned
+  prior could only weaken the gate via a feedback loop.
+- **Not built: SHA-256 hash-linking of evidence.** It cannot detect injected text in a user-role turn and depends on
+  the unstable transcript shape.
