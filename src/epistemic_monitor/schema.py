@@ -22,6 +22,15 @@ FALSIFIER_KINDS = (
 )
 
 _ID_RE = re.compile(r"^[DCPKR]-\d{4,}$")
+_NEGATION_RE = re.compile(r"\b(?:not|never|no|cannot|without|stop|avoid|forbidden|prohibited|"
+                          r"(?:do|does|is|are|must|should|ca|wo)n['’ ]?t|dont)\b", re.IGNORECASE)
+
+
+def has_negation(text: str) -> bool:
+    """Crude polarity of a statement. Word-overlap and embedding similarity cannot tell "Use X" from "Never use X",
+    so dedup and tombstone matching only treat two statements as the same when this agrees. A wrong answer here
+    costs one duplicate entry; ignoring polarity costs a swallowed reversal."""
+    return bool(_NEGATION_RE.search(text))
 
 
 def now_iso() -> str:
@@ -66,6 +75,7 @@ class Entry:
     scope_fingerprint: dict[str, str] = field(default_factory=dict)  # path -> content hash when written (agent premises only)
     evidence: str = ""  # quote the extractor cited at write time (<= 500 chars); previously only in the intervention log
     evidence_unverified: bool = False  # source=user but the quote has no counterpart in the user turns; display tag only
+    revoked_by: str | None = None  # who superseded or retired it ("user" | "agent"); set from the event
 
     @property
     def user_authority(self) -> bool:
@@ -92,6 +102,7 @@ class Entry:
             last_verified=d.get("last_verified") or now_iso(), embedding_ref=d.get("embedding_ref"),
             evidence=str(d.get("evidence", "")), evidence_unverified=bool(d.get("evidence_unverified", False)),
             scope_fingerprint={str(k): str(v) for k, v in (d.get("scope_fingerprint") or {}).items()},
+            revoked_by=d.get("revoked_by"),
         )
 
     def validate(self) -> list[str]:

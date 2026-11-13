@@ -807,3 +807,16 @@ Sweep and reviewer verdicts in [`RESEARCH-2026-11-11.md`](RESEARCH-2026-11-11.md
   whose quote matches only a forged label is demoted. A plain evidence mismatch stays warn-only.
 - **Not built:** a stale-copy sweep of CLAUDE.md, a transcript re-audit of user entries, sole-copy or type-weighted
   pin ordering.
+
+
+## Addendum (2026-11-12): revoked entries stay revoked
+
+Sweep and triage: [`RESEARCH-2026-11-12.md`](RESEARCH-2026-11-12.md).
+
+- **Resurrection guard** (`extractor.py` `_revoked_match`, `store.py` `revoked_by_user`, `Entry.revoked_by`).
+  A non-user restatement of an entry the user revoked is dropped and logged as `resurrection_blocked`.
+  Only a user-sourced candidate with evidence in a user turn can re-make it.
+- **Polarity-aware dedup** (`schema.has_negation`). Text, embedding and `ledger dedupe` matching no longer
+  treat "Use X" and "Never use X" as the same statement.
+- **`dedup_discarded_user_claim`**. Logged when a user-sourced candidate exactly duplicates an advisory
+  agent entry; `ledger feedback` prints these as `confirm` candidates. Nothing is promoted automatically.
