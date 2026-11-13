@@ -791,3 +791,19 @@ by independent read-only reviewers against the code:
   are tested with a zero-model-call anchor-substring check, ignoring anchors shared with any active entry; hits are logged as
   `stale_resurrected_candidate` on the `compaction_audit` record. The pin block is untouched: the new decision is already pinned with
   higher authority and the gate catches stale actions. Build a pin-block warning only if logs show real hits.
+
+
+## Addendum (2026-11-11): revocation freshness and forgery-proof turn labels
+
+Sweep and reviewer verdicts in [`RESEARCH-2026-11-11.md`](RESEARCH-2026-11-11.md).
+
+- **Revocation freshness** (after 2609.08258). Any hook that records a ledger event now refreshes `pinned.md` and the
+  `MEMORY.md` mirror before it exits (`LedgerStore.dirty`, `hooklib.run`); before, a supersede made in conversation
+  left the revoked entry pinned as binding until the next compaction or CLI command. Refreshes keep the last audit's
+  re-pinned marks and write only on change. This amends the §4 table: every row can write `pinned.md`.
+- **Forgery-proof turn labels** (after 2610.29869). The extractor's serializer indents turn bodies so that a label
+  can only come from the serializer; harness-written user rows (`isMeta`, `origin.kind` peer / task-notification,
+  envelope text) are labelled `[injected]` and grant no user authority (§5 now reads `origin`); a `source=user` claim
+  whose quote matches only a forged label is demoted. A plain evidence mismatch stays warn-only.
+- **Not built:** a stale-copy sweep of CLAUDE.md, a transcript re-audit of user entries, sole-copy or type-weighted
+  pin ordering.
