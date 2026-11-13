@@ -42,3 +42,18 @@ def test_feedback_report_is_read_only_signal():
     assert rep["candidates_for_review"] == [{"entry": "D-0001", "flags": 3}]
     assert rep["tighten"][0]["entry"] == "D-0001"
     assert feedback_report(gates[:2])["candidates_for_review"] == []
+
+
+def test_why_report_joins_gate_to_entry_and_later_supersession(store):
+    from epistemic_monitor.feedback import why_report
+    make_entry(store, statement="Use MongoDB.")
+    make_entry(store, statement="Use PostgreSQL.")
+    gate = {"kind": "gate", "tool_use_id": "tu1", "decision": "deny", "tool": "Bash", "ts": "2000-01-01T00:00:00+00:00",
+            "flagged": ["D-0001"], "scoped_entries": ["D-0001", "D-0002"], "scores": {"D-0001": {"p_conflict": 0.9}}}
+    assert store.supersede("D-0001", "D-0002", "switched", by="user")
+    rep = why_report([gate], "tu1", store.get_entry)
+    rows = {r["entry"]: r for r in rep["entries"]}
+    assert rep["decision"] == "deny" and set(rows) == {"D-0001", "D-0002"}
+    assert rows["D-0001"]["flagged"] and rows["D-0001"]["p_conflict"] == 0.9 and rows["D-0001"]["status"] == "superseded"
+    assert rows["D-0001"]["later"][0]["by"] == "D-0002" and rows["D-0002"]["later"] == []
+    assert why_report([gate], "nope", store.get_entry) is None

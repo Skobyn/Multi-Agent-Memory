@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import background, hooklib
-from .audit import behavior_watch, dropped_by_entailment, entailment_audit
+from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
 from .embeddings import make_embedder
@@ -377,8 +377,10 @@ def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     dropped = dropped_anchor | dropped_ent
     audited = {e.id for e in active if e.anchors or scores.get(e.id) is not None}
     pinned = write_pinned(cfg, store, dropped)
+    stale = stale_resurrected_candidates(store.entries("superseded"), active, summary,
+                                         int(cfg.get("audit", "stale_check_limit", 5)))
     store.log_intervention({
-        "kind": "compaction_audit", "session_id": sid, "trigger": payload.get("trigger"),
+        "kind": "compaction_audit", "stale_resurrected_candidate": stale, "session_id": sid, "trigger": payload.get("trigger"),
         "active": len(active), "audited": len(audited), "dropped": sorted(dropped),
         "dropped_by_anchor": sorted(dropped_anchor), "dropped_by_entailment": sorted(dropped_ent),
         "entailment_scores": {k: (round(v, 3) if v is not None else None) for k, v in scores.items()},

@@ -80,3 +80,16 @@ def behavior_watch(entries: list[Entry], tool_calls: list[dict[str, Any]], dm: D
         calls.append({"tool": name, "input": brief})
     r = dm.noul(WATCH_INSTRUCTIONS, {"entries": listed, "tool_calls": calls}, WATCH_CRITERIA)
     return r.p_true, r.latency_ms
+
+
+def stale_resurrected_candidates(superseded: list[Entry], active: list[Entry], summary: str, limit: int = 5) -> list[str]:
+    """Superseded entries whose distinctive anchors still appear in a compaction summary (log-only, no model call).
+
+    Anchors shared with any active entry are ignored, so a refinement or a replacement that reuses the
+    same terms does not fire. A summary that narrates "initially X, then Y" can still hit: this is a
+    measurement to decide whether a pin-block warning is worth building, never an enforcement signal.
+    """
+    shared = {a for e in active for a in e.anchors}
+    recent = sorted(superseded, key=lambda e: e.valid_to or "", reverse=True)
+    ranked = sorted(recent, key=lambda e: not e.user_authority)[:limit]   # stable: user-authority first, newest first
+    return [e.id for e in ranked if any(a and a not in shared and a in summary for a in e.anchors)]
