@@ -175,3 +175,16 @@ def test_unverified_user_evidence_demotes_non_constraint_types(store):
     assert res.added[0].provenance.source == "agent"
     assert res.added[0].provenance.confirmed_by_user is False
     assert any(i.get("kind") == "evidence_unverified" and i.get("demoted") for i in store.recent_interventions())
+
+
+def test_user_evidence_is_persisted_and_shown(store):
+    from epistemic_monitor.gate import Trip, format_citation
+    from epistemic_monitor.pinning import render_pinned
+    Extractor(store, FakeLLM([_resp()]), None).run(_turns(), "s1", mode="full")
+    d = store.get_entry("D-0001")
+    assert d.evidence == "Let's use PostgreSQL"
+    cite = format_citation({d.id: d}, [Trip(entry_id=d.id, kind="falsifier", detail="x")])
+    assert 'user said: "Let\'s use PostgreSQL"' in cite
+    assert 'user said: "Let\'s use PostgreSQL"' in render_pinned([d])
+    agent = store.get_entry("R-0001")
+    assert "user said" not in render_pinned([agent])
