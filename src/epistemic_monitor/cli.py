@@ -95,6 +95,7 @@ def ledger(argv: list[str]) -> int:
     s_res = sub.add_parser("resolve", help="close a review item (orphaned or unknown_current)")
     s_res.add_argument("id"); g = s_res.add_mutually_exclusive_group(required=True)
     g.add_argument("--keep", action="store_true"); g.add_argument("--retire", action="store_true")
+    s_res.add_argument("--by", choices=("user", "agent"), default="agent")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
     sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
@@ -155,7 +156,9 @@ def ledger(argv: list[str]) -> int:
             if not groups:
                 print("(no duplicates among active entries)")
             for g in groups:
-                keep, rest = g[0], g[1:]
+                # keep a user-authority entry when the group has one, so a merge never demotes a user rule
+                keep = next((e for e in g if e.user_authority), g[0])
+                rest = [e for e in g if e.id != keep.id]
                 print(f"{keep.id}  keep   {keep.statement[:110]}")
                 for e in rest:
                     if args.apply:
@@ -169,7 +172,9 @@ def ledger(argv: list[str]) -> int:
                 print(f"\n{sum(len(g) - 1 for g in groups)} would be superseded; rerun with --apply")
         elif args.cmd == "retire":
             ids = [i.upper() for i in args.ids]
-            if args.provenance:
+            if args.provenance == "user":
+                print("refused: bulk retire of user entries; retire them by id")
+            elif args.provenance:
                 ids += [e.id for e in store.active_entries() if e.provenance.source == args.provenance and e.id not in ids]
             if not ids:
                 print("nothing to retire: give ids or --provenance agent|user")
@@ -187,12 +192,13 @@ def ledger(argv: list[str]) -> int:
                 write_pinned(cfg, store)
             print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
-            ok = store.resolve(args.id.upper(), keep=bool(args.keep), by="user")
+            ok = store.resolve(args.id.upper(), keep=bool(args.keep), by=args.by, session_id="cli")
             if ok and args.keep:
                 from .drift import rebaseline
                 rebaseline(store, cfg.cwd, args.id.upper())
             write_pinned(cfg, store)
-            print(("kept " if args.keep else "retired ") + args.id.upper() if ok else f"{args.id.upper()} is not under review")
+            print(("kept " if args.keep else "retired ") + args.id.upper() if ok
+                  else f"{args.id.upper()} is not under review, or is a user entry (retiring it needs --by user)")
         elif args.cmd == "interventions":
             for r in store.recent_interventions(args.n):
                 print(json.dumps(r, ensure_ascii=False)[:400])
