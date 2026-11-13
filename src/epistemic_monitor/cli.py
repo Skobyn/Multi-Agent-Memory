@@ -100,6 +100,8 @@ def ledger(argv: list[str]) -> int:
     sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
     s_fb = sub.add_parser("feedback", help="read-only: entries often flagged then superseded by the user, and noisy flags labeled ok")
     s_fb.add_argument("--min-flags", type=int, default=3)
+    s_why = sub.add_parser("why", help="read-only: trace a gate decision to the entries, provenance and later supersessions behind it")
+    s_why.add_argument("tool_use_id")
     s_rev = sub.add_parser("review", help="list recent gate decisions that involved the decision model, for labeling")
     s_rev.add_argument("n", nargs="?", type=int, default=20)
     s_lab = sub.add_parser("label", help="record whether a flagged tool call really conflicted")
@@ -211,6 +213,18 @@ def ledger(argv: list[str]) -> int:
                 print(f"tighten  {r['entry']}  {r['labeled_ok']}/{r['flags']} flags labeled ok (loosen its scope or falsifier)")
             if not any(rep.values()):
                 print("(no feedback signals yet; label flagged calls with: em ledger label <tool_use_id> conflict|ok)")
+        elif args.cmd == "why":
+            from .feedback import why_report
+            rep = why_report(store.recent_interventions(20000), args.tool_use_id, store.get_entry)
+            if rep is None:
+                print(f"no gate record with tool_use_id {args.tool_use_id}")
+            else:
+                print(f"{rep['ts']}  {rep['decision']}  {rep['tool']}  {rep['path'] or ''}")
+                for r in rep["entries"]:
+                    print(f"  {r['entry']} [{r['status']}, {r['source']}]{' FLAGGED' if r['flagged'] else ''} p={r['p_conflict']}  {r['statement']}")
+                    print(f"      written in session {r['session_id'] or '?'} turn {r['turn_uuid'] or '?'}")
+                    for l in r["later"]:
+                        print(f"      later: {l['kind']}{' -> ' + l['by'] if l['by'] else ''} at {l['ts']}")
         elif args.cmd == "review":
             gates = [r for r in store.recent_interventions(2000) if r.get("kind") == "gate" and r.get("scores")][-args.n:]
             if not gates:

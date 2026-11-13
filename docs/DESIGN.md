@@ -774,3 +774,20 @@ Five candidates were ranked and attacked by two adversarial reviewers; results:
 - **Killed:** provenance-capped authority ladder (gate already keys deny power on `provenance.source`; no data feeds a finer
   ladder), competing hypotheses for premises (agent premises are already advisory), retrieval-triggered reconsolidation
   (overlaps the feedback report). DreamBench-SWE's null result argues against more typed maintenance.
+
+## Addendum (2026-11-10): forensic `ledger why` and stale-resurrection measurement
+
+Sweep: MemStrata (2606.26511: cosine cannot detect staleness, AUROC 0.59; deterministic key supersession can), memory-security
+survey (2604.16548: write-gate, trace-back and post-deletion verification are shared blind spots). Three candidates were attacked
+by independent read-only reviewers against the code:
+
+- **A. Key-based conflict candidates: killed (folded).** Redundant with the specified shadow `possibly_invalidated` field; an LLM-emitted
+  key drifts across phrasings (the paper's own extraction success on messy text is ~44%), and gate-time retrieval + Jev conflict already
+  catches the conflict where it matters. Revisit only if the `possibly_invalidated` labeled set shows keys add recall.
+- **B. `ledger why <tool_use_id>`: shrunk and built.** A read-only join of a gate record to the entries behind it (flagged, conflicts,
+  scoped, candidates), their provenance (source, session, turn) and whether they were closed afterwards (`valid_to`, `superseded_by`).
+  Full as-of replay was rejected: retire/resolve/confirm are not replay-safe and `orphaned`/`unknown_current` come from side effects.
+- **C. Stale-resurrection audit: shrunk to a measurement and built.** At PostCompact, the last 5 superseded entries (user-authority first)
+  are tested with a zero-model-call anchor-substring check, ignoring anchors shared with any active entry; hits are logged as
+  `stale_resurrected_candidate` on the `compaction_audit` record. The pin block is untouched: the new decision is already pinned with
+  higher authority and the gate catches stale actions. Build a pin-block warning only if logs show real hits.
