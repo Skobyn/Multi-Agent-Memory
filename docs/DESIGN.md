@@ -755,3 +755,22 @@ three adversarial reviewers who read the code; two survived, both much narrower 
 - **Open, measurement only:** a `rulesfile` baseline arm (rules in the repo plus "re-read after compaction") in a
   many-rules, many-turns `--policy-source file` scenario, pre-registered: if it matches pin, pinning does not justify itself
   against a free baseline. Also `audit.py` `behavior_watch` slices `entries[:25]` unranked.
+
+## Addendum (2026-11-09): second literature sweep, one idea built, one queued
+
+Sweep: Compaction Cliff 2608.22752, Nous 2606.22030, BeliefMem 2605.05583, Memora 2604.20006,
+DreamBench-SWE 2608.20664, SSGM 2603.11768, REALM 2609.16053 (abstract-level only, via search snippets).
+Five candidates were ranked and attacked by two adversarial reviewers; results:
+
+- **Built: persist the extractor's verbatim quote** (`Entry.evidence` from the 2026-11-08 addendum, <=500 chars) and show it in gate deny
+  citations and pin blocks for `source=user` entries. Motivation: `source=user` is decided by the extractor model and a
+  failed `evidence_supported` check is warn-only, so a bad or injected "user" entry carries full deny power; the quote
+  makes that visible to a reviewer. No behavior change to enforcement. Follow-up (needs shadow-mode data first): treat
+  `evidence_verified is False` entries as advisory.
+- **Queued: multi-rule retention bench.** ~15 user constraints over ~30 turns with repeated compaction, per-rule
+  retention for none/pin/gate arms. This is the regime where the literature's drops appear and DecisionDrift-Bench has not run.
+- **Narrowed, not built: stale-reliance Stop check** (a reply asserting a superseded user decision as current). Needs an
+  LLM judge; ship only with a supersession scenario in the bench to measure false blocks.
+- **Killed:** provenance-capped authority ladder (gate already keys deny power on `provenance.source`; no data feeds a finer
+  ladder), competing hypotheses for premises (agent premises are already advisory), retrieval-triggered reconsolidation
+  (overlaps the feedback report). DreamBench-SWE's null result argues against more typed maintenance.

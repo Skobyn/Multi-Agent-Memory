@@ -60,6 +60,8 @@ def render_pinned_ex(entries: list[Entry], dropped: set[str] | None = None, max_
         line = f"- **{e.id}** [{e.type}, {prov}]{mark}: {e.statement}"
         if e.rationale:
             line += f" — {e.rationale}"
+        if e.provenance.source == "user" and e.evidence:
+            line += f' (user said: "{e.evidence[:120]}")'
         if e.scope.paths:
             line += f" (scope: {', '.join(e.scope.paths)})"
         if not is_hard(e) and (shown >= max_entries or used + len(line) + 1 > max_chars - 200):
