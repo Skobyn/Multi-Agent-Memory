@@ -64,6 +64,8 @@ class Entry:
     last_verified: str = field(default_factory=now_iso)
     embedding_ref: str | None = None
     scope_fingerprint: dict[str, str] = field(default_factory=dict)  # path -> content hash when written (agent premises only)
+    evidence: str = ""  # quote the extractor cited at write time (<= 500 chars); previously only in the intervention log
+    evidence_unverified: bool = False  # source=user but the quote has no counterpart in the user turns; display tag only
 
     @property
     def user_authority(self) -> bool:
@@ -88,6 +90,7 @@ class Entry:
             superseded_by=d.get("superseded_by"), depends_on=list(d.get("depends_on", [])),
             valid_from=d.get("valid_from") or now_iso(), valid_to=d.get("valid_to"),
             last_verified=d.get("last_verified") or now_iso(), embedding_ref=d.get("embedding_ref"),
+            evidence=str(d.get("evidence", "")), evidence_unverified=bool(d.get("evidence_unverified", False)),
             scope_fingerprint={str(k): str(v) for k, v in (d.get("scope_fingerprint") or {}).items()},
         )
 

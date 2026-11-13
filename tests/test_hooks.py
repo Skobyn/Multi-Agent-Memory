@@ -391,7 +391,7 @@ def test_pin_block_survives_five_compactions_and_logs_truncation(cfg, store, mon
         assert "C-0001" in pinned and "not overridable" in pinned
     rec = _logged(cfg, "pin_truncated")[-1]
     assert rec["active_entries"] == 30 and len(rec["omitted"]) == 5
-    assert "more; run `/ledger list`" in pinned
+    assert "not shown (pin cap)" in pinned and "run `/ledger list`" in pinned
 
 
 def test_subagent_start_logs_omitted(cfg, store, monkeypatch):
