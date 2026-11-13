@@ -733,3 +733,25 @@ adversarial review; two were killed outright, two narrowed.
   prior could only weaken the gate via a feedback loop.
 - **Not built: SHA-256 hash-linking of evidence.** It cannot detect injected text in a user-role turn and depends on
   the unstable transcript shape.
+
+## Addendum (2026-11-09): two narrowed ideas from a second literature sweep
+
+Sources: The Compaction Cliff 2608.22752 (TypeCompact/TypeRetrieve), provenance-capped poisoning 2606.22030,
+evidence-gated skill promotion 2607.16621, selective forgetting 2608.28978. Six candidates were ranked and attacked by
+three adversarial reviewers who read the code; two survived, both much narrower than proposed.
+
+- **Pin hardening** (`pinning.py`). User-sourced `constraint` and `process` entries form a hard tier that is exempt from
+  the entry and character caps; other entries fill the remaining budget, a long entry is skipped rather than ending the
+  list (`break` became `continue`), ties go to the newest entry (it was the oldest, contradicting §7), and omitted ids are
+  listed. Relevance-aware ranking was rejected: the render sites have no recent-work signal, and a path-scoped constraint
+  matters most exactly when relevance is weakest.
+- **Extractor evidence downgrade** (`extractor.py`). When a claimed `source=user` entry's quote matches nothing the user
+  typed, non-constraint/process types are now stored as `agent` (as supersession already was). Constraints and process
+  steps stay user-sourced and are logged (`evidence_unverified`, `demoted:false`). Transcript tool results never reach the
+  extractor, so adjacency taint tracking was rejected as solving a channel that does not exist.
+- **Rejected:** decay-score forgetting (no access signal; agent premises can be a user constraint's dependency),
+  repeated-correction promotion (needs cross-session correction clustering, duplicates extractor recall), a c3/c5
+  compaction bench arm (Claude Code 2.1.311 does not compact that many times; the harness cannot build it).
+- **Open, measurement only:** a `rulesfile` baseline arm (rules in the repo plus "re-read after compaction") in a
+  many-rules, many-turns `--policy-source file` scenario, pre-registered: if it matches pin, pinning does not justify itself
+  against a free baseline. Also `audit.py` `behavior_watch` slices `entries[:25]` unranked.
