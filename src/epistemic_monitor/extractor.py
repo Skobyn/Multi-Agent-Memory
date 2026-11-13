@@ -18,7 +18,7 @@ from typing import Any
 
 from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
-from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, now_iso
+from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
 from .store import LedgerStore
 from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected
 
@@ -74,6 +74,7 @@ class ExtractionResult:
     added: list[Entry] = field(default_factory=list)
     superseded: list[dict[str, Any]] = field(default_factory=list)
     skipped_duplicates: int = 0
+    resurrection_blocked: int = 0  # non-user restatements of an entry the user revoked
     rejected: int = 0
     forged_user_source: int = 0  # 'user' claims downgraded: evidence not found in a user turn
     calls: int = 0
@@ -83,7 +84,7 @@ class ExtractionResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"added": [e.id for e in self.added], "superseded": self.superseded,
-                "skipped_duplicates": self.skipped_duplicates, "rejected": self.rejected, "forged_user_source": self.forged_user_source, "calls": self.calls,
+                "skipped_duplicates": self.skipped_duplicates, "resurrection_blocked": self.resurrection_blocked, "rejected": self.rejected, "forged_user_source": self.forged_user_source, "calls": self.calls,
                 "llm_latency_ms": self.llm_latency_ms, "input_tokens": self.input_tokens, "errors": self.errors[:5]}
 
 
@@ -308,18 +309,40 @@ class Extractor:
                 result.rejected += 1
                 continue
             norm = _normalize(statement)
-            if norm in normalized_active or norm in new_statements or self._text_near_duplicate(statement, new_statements):
+            claims_user = str(c.get("source", "agent")).lower() == "user" and has_user_turn
+            if norm in normalized_active:
+                existing = normalized_active[norm]
+                if claims_user and not existing.user_authority:
+                    # measurement only (never promotes): the user may have restated an advisory agent entry.
+                    # `ledger feedback` lists these as candidates for `ledger confirm <id>`.
+                    self.store.log_intervention({
+                        "kind": "dedup_discarded_user_claim", "entry": existing.id, "session_id": session_id,
+                        "evidence": str(c.get("evidence", ""))[:200],
+                        "evidence_supported": evidence_supported(str(c.get("evidence", "")), user_texts or [])})
+                result.skipped_duplicates += 1
+                continue
+            if norm in new_statements or self._text_near_duplicate(statement, new_statements):
                 result.skipped_duplicates += 1
                 continue
             embedding = self._embed(statement)
-            if embedding and self._near_duplicate(embedding):
+            if embedding and self._near_duplicate(embedding, statement):
                 result.skipped_duplicates += 1
                 continue
             # another extraction may have added the same statement since this run began (parallel sessions)
             if norm in {_normalize(e.statement) for e in self.store.active_entries()}:
                 result.skipped_duplicates += 1
                 continue
-            source = "user" if str(c.get("source", "agent")).lower() == "user" and has_user_turn else "agent"
+            source = "user" if claims_user else "agent"
+            # resurrection guard: active-only dedup cannot see revoked entries, so a decision the user reversed can
+            # come back with a new id when a compaction summary keeps it and the agent restates it
+            # (transparent-compact, 2610.20116). Only the user may re-make it, in words found in a user turn.
+            tomb = self._revoked_match(statement)
+            if tomb is not None and (source != "user" or (
+                    user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False)):
+                self.store.log_intervention({"kind": "resurrection_blocked", "entry": tomb.id, "statement": statement[:120],
+                                             "claimed_source": source, "session_id": session_id})
+                result.resurrection_blocked += 1
+                continue
             evidence_check: bool | None = None
             forged = unverified = demoted = False
             if source == "user" and user_texts:
@@ -411,15 +434,32 @@ class Extractor:
         words = set(_normalize(statement).split())
         if len(words) < 4:
             return False
-        others = [_normalize(e.statement) for e in self.store.active_entries()] + list(pending or [])
+        neg = has_negation(statement)
+        others = [e.statement for e in self.store.active_entries()] + list(pending or [])
         for other in others:
-            ow = set(other.split())
-            if not ow:
-                continue
+            ow = set(_normalize(other).split())
+            if not ow or has_negation(other) != neg:
+                continue  # opposite polarity is a reversal, not a paraphrase
             if len(words & ow) / len(words | ow) >= self.text_dedup_jaccard:
                 return True
         return False
 
-    def _near_duplicate(self, embedding: list[float]) -> bool:
+    def _near_duplicate(self, embedding: list[float], statement: str = "") -> bool:
         hits = self.store.search_vector(embedding, top_k=1)
-        return bool(hits) and hits[0][1] >= self.dedup_cosine
+        if not hits or hits[0][1] < self.dedup_cosine:
+            return False
+        return not statement or has_negation(hits[0][0].statement) == has_negation(statement)
+
+    def _revoked_match(self, statement: str) -> Entry | None:
+        """The user-revoked entry this statement restates, if any: same normalized text, or a word-set paraphrase
+        with the same polarity (so the negated replacement of a reversed decision is never matched)."""
+        norm = _normalize(statement)
+        words, neg = set(norm.split()), has_negation(statement)
+        for e in self.store.revoked_by_user():
+            if has_negation(e.statement) != neg:
+                continue
+            other = _normalize(e.statement)
+            ow = set(other.split())
+            if other == norm or (len(words) >= 4 and ow and len(words & ow) / len(words | ow) >= self.text_dedup_jaccard):
+                return e
+        return None
