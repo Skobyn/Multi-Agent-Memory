@@ -11,13 +11,15 @@ under the authority rule. Gate Tiers 1–3 are Phase 2.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 from . import background, hooklib
-from .audit import behavior_watch, dropped_by_entailment, entailment_audit
+from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
 from .embeddings import make_embedder
@@ -27,7 +29,8 @@ from .gate import GatePipeline
 from .llm import make_llm
 from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, read_turns, rows_to_turns
+from .transcript import (KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, looks_injected, read_turns,
+                         rows_to_turns)
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
 
@@ -255,23 +258,61 @@ def _mirror_memory_md(cfg: Config, pinned: str, max_lines: int = 40) -> None:
         return
     start, end = "<!-- epistemic-monitor:start -->", "<!-- epistemic-monitor:end -->"
     block = "\n".join([start, *pinned.splitlines()[:max_lines], end])
-    text = path.read_text(encoding="utf-8")
-    if start in text and end in text:
-        pre, rest = text.split(start, 1)
+    old = path.read_text(encoding="utf-8")
+    if start in old and end in old:
+        pre, rest = old.split(start, 1)
         _, post = rest.split(end, 1)
         text = pre + block + post
     else:
-        text = text.rstrip() + "\n\n" + block + "\n"
-    path.write_text(text, encoding="utf-8")
+        text = old.rstrip() + "\n\n" + block + "\n"
+    _write_if_changed(path, text, old)
+
+
+def _write_if_changed(path: Path, text: str, old: str | None = None) -> bool:
+    """Replace ``path`` atomically, and only when the content differs: these files are refreshed from every hook
+    that changes the ledger, and MEMORY.md is also edited by Claude Code itself."""
+    if old is None:
+        try:
+            old = path.read_text(encoding="utf-8")
+        except OSError:
+            old = None
+    if old == text:
+        return False
+    target = Path(os.path.realpath(path))  # keep a symlinked MEMORY.md a symlink
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        if target.exists():
+            shutil.copymode(target, tmp)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
+
+
+_REPINNED_RE = re.compile(r"^- \*\*([A-Z]-\d+)\*\* \[[^\]]*\] \[re-pinned: dropped by compaction\]", re.MULTILINE)
+
+
+def _repinned_ids(cfg: Config) -> set[str]:
+    """Ids the last compaction audit marked as dropped, read back from pinned.md so that a refresh between
+    compactions keeps the marks."""
+    try:
+        return set(_REPINNED_RE.findall(cfg.pinned_path.read_text(encoding="utf-8")))
+    except OSError:
+        return set()
 
 
 def write_pinned(cfg: Config, store: LedgerStore, dropped: set[str] | None = None) -> str:
+    """Render the pin block from the live ledger. ``dropped`` is the compaction audit's result; ``None`` means a
+    refresh between compactions (a hook or CLI command changed the ledger), which keeps the last audit's marks."""
     active = store.active_entries()
-    pinned, omitted = render_pinned_ex(active, dropped, cfg.get("pinning", "max_entries", 25),
+    marks = dropped if dropped is not None else _repinned_ids(cfg)
+    pinned, omitted = render_pinned_ex(active, marks, cfg.get("pinning", "max_entries", 25),
                                        cfg.get("pinning", "max_chars", 10000))
     if omitted and dropped is not None:  # only on the compaction path, so CLI edits do not spam the log
         store.log_intervention({"kind": "pin_truncated", "omitted": omitted, "active_entries": len(active)})
-    cfg.pinned_path.write_text(pinned, encoding="utf-8")
+    _write_if_changed(cfg.pinned_path, pinned)
+    store.dirty = False
     if cfg.get("pinning", "mirror_memory_md", True):
         _mirror_memory_md(cfg, pinned)
     return pinned
@@ -377,8 +418,10 @@ def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     dropped = dropped_anchor | dropped_ent
     audited = {e.id for e in active if e.anchors or scores.get(e.id) is not None}
     pinned = write_pinned(cfg, store, dropped)
+    stale = stale_resurrected_candidates(store.entries("superseded"), active, summary,
+                                         int(cfg.get("audit", "stale_check_limit", 5)))
     store.log_intervention({
-        "kind": "compaction_audit", "session_id": sid, "trigger": payload.get("trigger"),
+        "kind": "compaction_audit", "stale_resurrected_candidate": stale, "session_id": sid, "trigger": payload.get("trigger"),
         "active": len(active), "audited": len(audited), "dropped": sorted(dropped),
         "dropped_by_anchor": sorted(dropped_anchor), "dropped_by_entailment": sorted(dropped_ent),
         "entailment_scores": {k: (round(v, 3) if v is not None else None) for k, v in scores.items()},
@@ -393,7 +436,8 @@ def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
 def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
-    applied = _apply_supersede_lines(prompt, "user", store, sid)
+    # a harness envelope delivered as a prompt (a background task's result, another agent's message) is not the user
+    applied = _apply_supersede_lines(prompt, "agent" if looks_injected(prompt) else "user", store, sid)
     record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
     if cfg.get("extraction", "incremental", True) and len(prompt.strip()) >= 12:
         last = float(store.get_state(sid, "last_extraction_ts", 0) or 0)

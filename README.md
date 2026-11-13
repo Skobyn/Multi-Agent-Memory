@@ -193,6 +193,12 @@ also exposed and fixed two gate defects (false denies on compliant commits). Ful
 clears everything the agent inferred in one go; user-made entries need `--by user`. The Stop and
 subagent checks only ever block on user-made entries.
 
+**Revoked stays revoked.** Once you supersede or retire an entry, the agent restating it (for example because
+a compaction summary kept the old decision) does not bring it back; the attempt is logged as
+`resurrection_blocked`. Say it again yourself to re-make it. Opposite statements ("Use X" / "Never use X")
+are never merged as duplicates. `/ledger feedback` also lists advisory entries you appear to have restated,
+as candidates for `/ledger confirm <id>`.
+
 ## Enforcement
 
 The gate is on by default and budgeted. A tool call is denied only when it is **hard**: it trips a

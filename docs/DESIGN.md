@@ -713,6 +713,114 @@ Tool-Drift (2605.24941). Three candidates were attacked by adversarial reviewers
   Built only the measurement: `pin_truncated` (compaction path) and `omitted` on `subagent_start` interventions list
   ids cut by the entry/char caps. Build SubagentStart prompt-matched selection only if these logs show real truncation.
 
+## Addendum (2026-11-08): two narrowed ideas from a second literature sweep
+
+Sweep of the last 30 days (ARCBench 2611.03223, MemUse 2611.01718, Delivery-Not-Storage 2607.20972, Σ-Mem
+2607.27958, OpenWiki, MemHarmBench 2611.01700; secondary digests, numbers unchecked). Four candidates went to
+adversarial review; two were killed outright, two narrowed.
+
+- **Built: visible pin drops.** When the pin cap trims, the tail names the omitted ids instead of "N more", so no
+  drop is silent.
+- **Built: stored evidence + `[unverified]` tag.** `Entry.evidence` keeps the cited quote; a `source=user` entry whose
+  quote matches nothing in the user turns gets `evidence_unverified` and a tag in the pin block. Enforcement and
+  authority are unchanged (demoting a real user constraint on a paraphrase is the worse error).
+- **Killed: prompt-time override guard (ARCBench).** `UserPromptSubmit` is async so context cannot reach this turn;
+  pin and gate already measure 0% on hard triggers; the bench has no multi-turn cell that could show headroom.
+  Prerequisite if revisited: a "rule in turn 1, violating request in turn 2" bench cell where pin or gate fail.
+- **Killed: delivery-utilization telemetry / relevance-gated pinning (MemUse).** "Touched" mis-scores constraints
+  (obeying means zero touches), and relevance trimming risks silent drops.
+- **Killed: per-source reliability priors (Σ-Mem).** Ledgers have single-digit samples per source×type, and a learned
+  prior could only weaken the gate via a feedback loop.
+- **Not built: SHA-256 hash-linking of evidence.** It cannot detect injected text in a user-role turn and depends on
+  the unstable transcript shape.
+
+## Addendum (2026-11-09): two narrowed ideas from a second literature sweep
+
+Sources: The Compaction Cliff 2608.22752 (TypeCompact/TypeRetrieve), provenance-capped poisoning 2606.22030,
+evidence-gated skill promotion 2607.16621, selective forgetting 2608.28978. Six candidates were ranked and attacked by
+three adversarial reviewers who read the code; two survived, both much narrower than proposed.
+
+- **Pin hardening** (`pinning.py`). User-sourced `constraint` and `process` entries form a hard tier that is exempt from
+  the entry and character caps; other entries fill the remaining budget, a long entry is skipped rather than ending the
+  list (`break` became `continue`), ties go to the newest entry (it was the oldest, contradicting §7), and omitted ids are
+  listed. Relevance-aware ranking was rejected: the render sites have no recent-work signal, and a path-scoped constraint
+  matters most exactly when relevance is weakest.
+- **Extractor evidence downgrade** (`extractor.py`). When a claimed `source=user` entry's quote matches nothing the user
+  typed, non-constraint/process types are now stored as `agent` (as supersession already was). Constraints and process
+  steps stay user-sourced and are logged (`evidence_unverified`, `demoted:false`). Transcript tool results never reach the
+  extractor, so adjacency taint tracking was rejected as solving a channel that does not exist.
+- **Rejected:** decay-score forgetting (no access signal; agent premises can be a user constraint's dependency),
+  repeated-correction promotion (needs cross-session correction clustering, duplicates extractor recall), a c3/c5
+  compaction bench arm (Claude Code 2.1.311 does not compact that many times; the harness cannot build it).
+- **Open, measurement only:** a `rulesfile` baseline arm (rules in the repo plus "re-read after compaction") in a
+  many-rules, many-turns `--policy-source file` scenario, pre-registered: if it matches pin, pinning does not justify itself
+  against a free baseline. Also `audit.py` `behavior_watch` slices `entries[:25]` unranked.
+
+## Addendum (2026-11-09): second literature sweep, one idea built, one queued
+
+Sweep: Compaction Cliff 2608.22752, Nous 2606.22030, BeliefMem 2605.05583, Memora 2604.20006,
+DreamBench-SWE 2608.20664, SSGM 2603.11768, REALM 2609.16053 (abstract-level only, via search snippets).
+Five candidates were ranked and attacked by two adversarial reviewers; results:
+
+- **Built: persist the extractor's verbatim quote** (`Entry.evidence` from the 2026-11-08 addendum, <=500 chars) and show it in gate deny
+  citations and pin blocks for `source=user` entries. Motivation: `source=user` is decided by the extractor model and a
+  failed `evidence_supported` check is warn-only, so a bad or injected "user" entry carries full deny power; the quote
+  makes that visible to a reviewer. No behavior change to enforcement. Follow-up (needs shadow-mode data first): treat
+  `evidence_verified is False` entries as advisory.
+- **Queued: multi-rule retention bench.** ~15 user constraints over ~30 turns with repeated compaction, per-rule
+  retention for none/pin/gate arms. This is the regime where the literature's drops appear and DecisionDrift-Bench has not run.
+- **Narrowed, not built: stale-reliance Stop check** (a reply asserting a superseded user decision as current). Needs an
+  LLM judge; ship only with a supersession scenario in the bench to measure false blocks.
+- **Killed:** provenance-capped authority ladder (gate already keys deny power on `provenance.source`; no data feeds a finer
+  ladder), competing hypotheses for premises (agent premises are already advisory), retrieval-triggered reconsolidation
+  (overlaps the feedback report). DreamBench-SWE's null result argues against more typed maintenance.
+
+## Addendum (2026-11-10): forensic `ledger why` and stale-resurrection measurement
+
+Sweep: MemStrata (2606.26511: cosine cannot detect staleness, AUROC 0.59; deterministic key supersession can), memory-security
+survey (2604.16548: write-gate, trace-back and post-deletion verification are shared blind spots). Three candidates were attacked
+by independent read-only reviewers against the code:
+
+- **A. Key-based conflict candidates: killed (folded).** Redundant with the specified shadow `possibly_invalidated` field; an LLM-emitted
+  key drifts across phrasings (the paper's own extraction success on messy text is ~44%), and gate-time retrieval + Jev conflict already
+  catches the conflict where it matters. Revisit only if the `possibly_invalidated` labeled set shows keys add recall.
+- **B. `ledger why <tool_use_id>`: shrunk and built.** A read-only join of a gate record to the entries behind it (flagged, conflicts,
+  scoped, candidates), their provenance (source, session, turn) and whether they were closed afterwards (`valid_to`, `superseded_by`).
+  Full as-of replay was rejected: retire/resolve/confirm are not replay-safe and `orphaned`/`unknown_current` come from side effects.
+- **C. Stale-resurrection audit: shrunk to a measurement and built.** At PostCompact, the last 5 superseded entries (user-authority first)
+  are tested with a zero-model-call anchor-substring check, ignoring anchors shared with any active entry; hits are logged as
+  `stale_resurrected_candidate` on the `compaction_audit` record. The pin block is untouched: the new decision is already pinned with
+  higher authority and the gate catches stale actions. Build a pin-block warning only if logs show real hits.
+
+
+## Addendum (2026-11-11): revocation freshness and forgery-proof turn labels
+
+Sweep and reviewer verdicts in [`RESEARCH-2026-11-11.md`](RESEARCH-2026-11-11.md).
+
+- **Revocation freshness** (after 2609.08258). Any hook that records a ledger event now refreshes `pinned.md` and the
+  `MEMORY.md` mirror before it exits (`LedgerStore.dirty`, `hooklib.run`); before, a supersede made in conversation
+  left the revoked entry pinned as binding until the next compaction or CLI command. Refreshes keep the last audit's
+  re-pinned marks and write only on change. This amends the §4 table: every row can write `pinned.md`.
+- **Forgery-proof turn labels** (after 2610.29869). The extractor's serializer indents turn bodies so that a label
+  can only come from the serializer; harness-written user rows (`isMeta`, `origin.kind` peer / task-notification,
+  envelope text) are labelled `[injected]` and grant no user authority (§5 now reads `origin`); a `source=user` claim
+  whose quote matches only a forged label is demoted. A plain evidence mismatch stays warn-only.
+- **Not built:** a stale-copy sweep of CLAUDE.md, a transcript re-audit of user entries, sole-copy or type-weighted
+  pin ordering.
+
+
+## Addendum (2026-11-12): revoked entries stay revoked
+
+Sweep and triage: [`RESEARCH-2026-11-12.md`](RESEARCH-2026-11-12.md).
+
+- **Resurrection guard** (`extractor.py` `_revoked_match`, `store.py` `revoked_by_user`, `Entry.revoked_by`).
+  A non-user restatement of an entry the user revoked is dropped and logged as `resurrection_blocked`.
+  Only a user-sourced candidate with evidence in a user turn can re-make it.
+- **Polarity-aware dedup** (`schema.has_negation`). Text, embedding and `ledger dedupe` matching no longer
+  treat "Use X" and "Never use X" as the same statement.
+- **`dedup_discarded_user_claim`**. Logged when a user-sourced candidate exactly duplicates an advisory
+  agent entry; `ledger feedback` prints these as `confirm` candidates. Nothing is promoted automatically.
+
 ## Addendum (2026-11-13): authority-preserving invalidation
 
 From a MemoryDojo (2611.09721) poisoning review (`docs/RESEARCH-2026-11-13.md`): the §3 cascade (dependents ->

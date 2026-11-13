@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import Config
-from .schema import Entry, TYPE_PREFIX, now_iso
+from .schema import Entry, TYPE_PREFIX, has_negation, now_iso
 
 
 def _pack(vec: list[float]) -> bytes:
@@ -39,6 +39,7 @@ def cosine(a: list[float], b: list[float]) -> float:
 class LedgerStore:
     def __init__(self, config: Config) -> None:
         self.config = config
+        self.dirty = False  # set when this process records a ledger event (see hooklib.run)
         config.ensure_dirs()
         self._conn = sqlite3.connect(str(config.index_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -110,6 +111,7 @@ class LedgerStore:
         kind = ev.get("event")
         if record:
             self._append_event(ev)
+            self.dirty = True  # ledger changed in this process: pinned.md and the MEMORY.md mirror are stale
         if kind == "entry_add":
             self._upsert(Entry.from_dict(ev["entry"]))
         elif kind == "entry_update":
@@ -123,7 +125,8 @@ class LedgerStore:
             old, new = self.get_entry(ev["old"]), self.get_entry(ev["new"]) if ev.get("new") else None
             if old is not None:
                 d = old.to_dict()
-                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("ts") or now_iso())
+                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("ts") or now_iso(),
+                         revoked_by=ev.get("by"))
                 self._upsert(Entry.from_dict(d))
             if new is not None and ev["old"] not in new.supersedes:
                 d = new.to_dict()
@@ -164,6 +167,8 @@ class LedgerStore:
             if e is not None:
                 d = e.to_dict()
                 d["status"] = ev["status"]
+                if ev["status"] == "retired":
+                    d["revoked_by"] = ev.get("by")
                 self._upsert(Entry.from_dict(d))
 
     # ------------------------------------------------------------------ entries
@@ -234,6 +239,8 @@ class LedgerStore:
                     continue
                 bw = set(norm(b.statement).split())
                 same = norm(a.statement) == norm(b.statement)
+                if has_negation(a.statement) != has_negation(b.statement):
+                    continue  # "Use X" and "Never use X" overlap heavily; never merge across polarity
                 if same or (len(aw) >= 4 and len(bw) >= 4 and len(aw & bw) / len(aw | bw) >= jaccard):
                     group.append(b)
                     taken.add(b.id)
@@ -296,6 +303,12 @@ class LedgerStore:
     def dependents_of(self, entry_id: str) -> list[Entry]:
         return [e for e in self.entries(None) if entry_id in e.depends_on]
 
+    def revoked_by_user(self) -> list[Entry]:
+        """Tombstones: superseded or retired entries that carried user authority or that the user revoked. Entries
+        the agent revoked on its own are excluded, so the agent can re-make its own decisions."""
+        return [e for e in self.entries("superseded") + self.entries("retired")
+                if e.user_authority or e.revoked_by == "user"]
+
     def needs_review(self) -> list[Entry]:
         """Entries whose premise was superseded (orphaned) or may have moved (unknown_current)."""
         return self.entries("orphaned") + self.entries("unknown_current")
@@ -315,7 +328,7 @@ class LedgerStore:
                                                                                "last_verified": now_iso()}})
         else:
             self._apply_event({"event": "status", "id": e.id, "status": "retired", "reason": "resolved at review",
-                               "session_id": session_id})
+                               "by": by, "session_id": session_id})
         self.log_intervention({"kind": "review_resolved", "entry": e.id, "keep": keep, "session_id": session_id})
         return True
 

@@ -44,11 +44,17 @@ class Turn:
     tool_input: dict = field(default_factory=dict)
     is_sidechain: bool = False
     is_meta: bool = False
+    is_injected: bool = False  # a user-role row the harness wrote (task notification, peer message, reminder)
     extra: dict = field(default_factory=dict)
 
     @property
     def is_message(self) -> bool:
         return self.kind in (KIND_USER_TEXT, KIND_ASSISTANT_TEXT)
+
+    @property
+    def is_human(self) -> bool:
+        """A user text turn the user is accountable for. Only these can grant user authority to a ledger entry."""
+        return self.kind == KIND_USER_TEXT and not self.is_meta and not self.is_injected and not looks_injected(self.text)
 
 
 @dataclass
@@ -60,6 +66,27 @@ class ReadStats:
     compactions: int = 0
     last_uuid: str | None = None
     versions: set[str] = field(default_factory=set)
+
+
+_INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-message", "Another Claude session sent a message",
+                      "<local-command-stdout>", "<local-command-stderr>")
+
+
+def looks_injected(text: str) -> bool:
+    """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope."""
+    return (text or "").lstrip().startswith(_INJECTED_PREFIXES)
+
+
+def injected_origin(row: dict) -> bool:
+    """Does the row's ``origin`` say the harness, not the user, wrote it? Seen in Claude Code transcripts:
+    ``{"kind": "peer"}`` (another agent's message) and ``{"kind": "task-notification"}`` (a background task's
+    result). A task notification with ``subkind == "scheduled-trigger"`` is the stored prompt of a routine, which is
+    the user's own instruction, so it stays human. Unknown kinds stay human: the reader fails open (§5)."""
+    origin = row.get("origin")
+    if not isinstance(origin, dict):
+        return False
+    kind = str(origin.get("kind", ""))
+    return kind == "peer" or (kind == "task-notification" and origin.get("subkind") != "scheduled-trigger")
 
 
 def _text_of_content(content) -> str:
@@ -92,6 +119,7 @@ def rows_to_turns(row: dict) -> list[Turn]:
         raw_type=rtype,
         is_sidechain=bool(row.get("isSidechain", False)),
         is_meta=bool(row.get("isMeta", False)),
+        is_injected=injected_origin(row),
     )
 
     if rtype == "system" and row.get("subtype") == "compact_boundary":
