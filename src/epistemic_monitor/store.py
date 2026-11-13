@@ -130,10 +130,15 @@ class LedgerStore:
                 d["supersedes"] = list(new.supersedes) + [ev["old"]]
                 self._upsert(Entry.from_dict(d))
             # propagated invalidation (DESIGN §3): explicit dependents -> orphaned; same-scope entries with no
-            # explicit edge -> unknown_current (their premise may have moved; the user decides at the next briefing)
-            orphaned = set()
+            # explicit edge -> unknown_current (their premise may have moved; the user decides at the next briefing).
+            # Only a user supersession may knock a user-authority entry out of enforcement: otherwise an agent could
+            # strip a user constraint by superseding its own entry with an overlapping scope (MemoryDojo 2611.09721).
+            user_ok = ev.get("by") == "user"
+            orphaned, skipped = set(), []
             for dep in self.dependents_of(ev["old"]):
-                if dep.status == "active":
+                if dep.status == "active" and dep.user_authority and not user_ok:
+                    skipped.append(dep.id)
+                elif dep.status == "active":
                     d = dep.to_dict()
                     d["status"] = "orphaned"
                     self._upsert(Entry.from_dict(d))
@@ -145,9 +150,15 @@ class LedgerStore:
                         continue
                     shared = set(e.scope.paths) & set(old.scope.paths)
                     if shared and not (shared <= new_paths and new is not None):
+                        if e.user_authority and not user_ok:
+                            skipped.append(e.id)
+                            continue
                         d = e.to_dict()
                         d["status"] = "unknown_current"
                         self._upsert(Entry.from_dict(d))
+            if skipped and record:
+                self.log_intervention({"kind": "cascade_skipped", "superseded": ev["old"], "entries": skipped,
+                                       "by": ev.get("by"), "session_id": ev.get("session_id", "")})
         elif kind == "status":
             e = self.get_entry(ev["id"])
             if e is not None:
@@ -289,10 +300,14 @@ class LedgerStore:
         """Entries whose premise was superseded (orphaned) or may have moved (unknown_current)."""
         return self.entries("orphaned") + self.entries("unknown_current")
 
-    def resolve(self, entry_id: str, keep: bool, session_id: str = "cli") -> bool:
-        """Close a review item: keep it (back to active, dependency edges to superseded entries dropped) or retire it."""
+    def resolve(self, entry_id: str, keep: bool, session_id: str = "cli", by: str = "agent") -> bool:
+        """Close a review item: keep it (back to active, dependency edges to superseded entries dropped) or retire it.
+        Retiring a user-authority entry needs ``by="user"`` (authority rule, as for ``retire``)."""
         e = self.get_entry(entry_id)
         if e is None or e.status not in ("orphaned", "unknown_current"):
+            return False
+        if not keep and e.user_authority and by != "user":
+            self.log_intervention({"kind": "resolve_refused", "entry": entry_id, "by": by, "session_id": session_id})
             return False
         if keep:
             live = [d for d in e.depends_on if (self.get_entry(d) or Entry(id=d, type="x", statement="")).status == "active"]

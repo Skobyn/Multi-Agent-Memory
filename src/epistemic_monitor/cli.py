@@ -187,7 +187,7 @@ def ledger(argv: list[str]) -> int:
                 write_pinned(cfg, store)
             print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
-            ok = store.resolve(args.id.upper(), keep=bool(args.keep))
+            ok = store.resolve(args.id.upper(), keep=bool(args.keep), by="user")
             if ok and args.keep:
                 from .drift import rebaseline
                 rebaseline(store, cfg.cwd, args.id.upper())

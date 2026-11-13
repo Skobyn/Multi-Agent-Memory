@@ -91,7 +91,8 @@ def test_supersession_marks_same_scope_entries_unknown_current_and_resolve(cfg, 
     assert {"from": dep.id, "to": old.id, "kind": "depends_on"} in g["edges"]
     # resolve: keep drops the dead edge and reactivates; retire closes it
     assert store.resolve(dep.id, keep=True) and store.get_entry(dep.id).status == "active" and store.get_entry(dep.id).depends_on == []
-    assert store.resolve(same.id, keep=False) and store.get_entry(same.id).status == "retired"
+    assert store.resolve(same.id, keep=False) is False  # a user entry is retired only by the user
+    assert store.resolve(same.id, keep=False, by="user") and store.get_entry(same.id).status == "retired"
     assert store.resolve(other.id, keep=True) is False
     assert store.needs_review() == []
     # the index rebuilds to the same state from the event log
@@ -120,3 +121,40 @@ def test_duplicate_groups_retire_and_authority(cfg, store):
     assert store.retire(b.id, "dup") is True and store.retire(b.id, "dup") is False
     store.rebuild_from_events()
     assert store.get_entry(b.id).status == "retired" and store.get_entry(u.id).status == "retired"
+
+
+def test_agent_supersession_cascade_cannot_strip_user_entries(cfg, store):
+    """MemoryDojo-style attack: the agent supersedes its own entry to knock a user constraint out of enforcement."""
+    user_c = make_entry(store, type="constraint", statement="Never edit applied migrations.",
+                        scope={"paths": ["db/migrations/**"]})
+    confirmed = make_entry(store, type="premise", statement="Migrations are applied in CI only.", source="agent",
+                           confirmed=False, scope={"paths": ["db/migrations/**"]})
+    assert store.confirm(confirmed.id, by="user")
+    agent_d = make_entry(store, statement="Squash migrations weekly.", source="agent", confirmed=False,
+                         scope={"paths": ["db/migrations/**"]})
+    user_dep = make_entry(store, type="constraint", statement="Keep one migration per PR.", depends_on=[agent_d.id])
+    agent_dep = make_entry(store, statement="Squash script lives in bin/squash.", source="agent", confirmed=False,
+                           depends_on=[agent_d.id])
+    agent_same = make_entry(store, statement="Migration files are named by date.", source="agent", confirmed=False,
+                            scope={"paths": ["db/migrations/**"]})
+    assert store.supersede(agent_d.id, None, "policy update supersedes pinned policies", by="agent")
+    for e in (user_c, confirmed, user_dep):
+        assert store.get_entry(e.id).status == "active"
+    assert store.get_entry(agent_dep.id).status == "orphaned"
+    assert store.get_entry(agent_same.id).status == "unknown_current"
+    skip = [r for r in store.recent_interventions() if r["kind"] == "cascade_skipped"]
+    assert len(skip) == 1 and set(skip[0]["entries"]) == {user_c.id, confirmed.id, user_dep.id}
+    # replay gives the same state and logs nothing new
+    store.rebuild_from_events()
+    assert store.get_entry(user_c.id).status == "active" and store.get_entry(agent_same.id).status == "unknown_current"
+    assert len([r for r in store.recent_interventions() if r["kind"] == "cascade_skipped"]) == 1
+
+
+def test_user_supersession_still_cascades_to_user_entries(cfg, store):
+    old = make_entry(store, statement="Use PostgreSQL.", scope={"paths": ["src/db/*"]})
+    same = make_entry(store, type="constraint", statement="Queries go through the ORM.", scope={"paths": ["src/db/*"]})
+    assert store.supersede(old.id, None, "moving to SQLite", by="user")
+    assert store.get_entry(same.id).status == "unknown_current"
+    assert store.resolve(same.id, keep=False, by="agent") is False
+    assert any(r["kind"] == "resolve_refused" for r in store.recent_interventions())
+    assert store.get_entry(same.id).status == "unknown_current"
