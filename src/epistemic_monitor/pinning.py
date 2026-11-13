@@ -64,6 +64,7 @@ def render_pinned_ex(entries: list[Entry], dropped: set[str] | None = None, max_
             line += f' (user said: "{e.evidence[:120]}")'
         if e.scope.paths:
             line += f" (scope: {', '.join(e.scope.paths)})"
+        line = " ".join(line.split())  # one entry, one line: a statement cannot start a line of its own
         if not is_hard(e) and (shown >= max_entries or used + len(line) + 1 > max_chars - 200):
             omitted.append(e.id)
             continue
