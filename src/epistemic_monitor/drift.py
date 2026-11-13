@@ -1,7 +1,8 @@
 """Premise drift check (idea from MemTrace, arXiv 2610.04838): evidence is only reusable while the
 repository state it was observed against still holds.
 
-Narrow by design: only agent/summary *premises* carry a fingerprint, so user-authority entries and
+Narrow by design: only agent/summary *premises* carry a fingerprint, and premises the user made or later
+confirmed (``Entry.user_authority``) are skipped, so user-authority entries and
 constraints never go stale from file edits. The check runs at SessionStart only (never in the gate),
 is time-capped, and only moves an entry to ``unknown_current`` for re-verification via
 ``/ledger resolve``; it never retires anything.
@@ -48,7 +49,7 @@ def drift_check(store, root: Path, budget_s: float = 0.2, session_id: str = "") 
     deadline = time.monotonic() + budget_s
     moved: list[str] = []
     for e in store.active_entries():
-        if not e.scope_fingerprint or e.type != "premise" or e.provenance.source == "user":
+        if not e.scope_fingerprint or e.type != "premise" or e.user_authority:
             continue
         if time.monotonic() > deadline:
             break
