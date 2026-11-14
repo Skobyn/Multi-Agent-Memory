@@ -198,3 +198,17 @@ def test_confirm_promotes_agent_entry_user_only(cfg, store):
     # survives a rebuild from the event log
     store.rebuild_from_events()
     assert store.get_entry(e.id).provenance.confirmed_by_user is True
+
+
+def test_denied_prior_step_does_not_satisfy_process_falsifier(cfg, store):
+    # HANDBOOK.md (2607.25398): agents act against a required check. A history row is written in PreToolUse even when
+    # the gate denies the call, so a denied `pytest` must not count as the prior step having run.
+    e = make_entry(store, type="process", statement="Run pytest before every commit.",
+                   falsifiers=[{"kind": "command_requires_prior", "pattern": r"git\s+commit", "prior_pattern": r"pytest", "window": 20}])
+    pipe = GatePipeline(store, cfg, dm=None, llm=None)
+    res = pipe.evaluate("Bash", {"command": "git commit -m x"}, "s1",
+                        history=[{"tool": "Bash", "command": "pytest -q", "decision": "deny"}])
+    assert [t.kind for t in res.trips] == ["command_requires_prior"] and e.id not in res.cleared
+    res = pipe.evaluate("Bash", {"command": "git commit -m x"}, "s2",
+                        history=[{"tool": "Bash", "command": "pytest -q", "decision": "advisory"}])
+    assert res.trips == [] and res.cleared == [e.id]
