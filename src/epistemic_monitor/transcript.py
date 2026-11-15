@@ -84,26 +84,42 @@ def looks_injected(text: str) -> bool:
 
 _ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr")
 _ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
-_FENCE_BLOCK_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.DOTALL | re.MULTILINE)
+# a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at
+# least as long (CommonMark); an unclosed fence runs to the end
+_FENCE_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*(?:\n.*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)|\Z)", re.DOTALL | re.MULTILINE)
+_INLINE_FENCE_RE = re.compile(r"(`{3,}).*?(?:\1|\Z)", re.DOTALL)  # ```...``` mid-line, possibly spanning lines
+_CODE_SPAN_RE = re.compile(r"(`+)[^`\n]*?\1")
 _QUOTE_LINE_RE = re.compile(r"^[ \t]*>.*$", re.MULTILINE)
 _PEER_MARKER = "Another Claude session sent a message"
 
 
-def own_words(text: str) -> str:
-    """The part of a user prompt the user wrote as their own words, not as quoted material: drops fenced code blocks
-    (an unclosed fence runs to the end), ``>`` quote lines, harness envelopes found anywhere in the text (an unclosed
-    one runs to the end), and everything after a peer-message marker. The text a user pastes is still in the prompt
-    without any marker, so this only removes what is visibly quoted (Role Grounding Attack, arXiv 2610.38209: a
-    preference inside a quoted conversation gets recorded as the user's own). Errs toward removing too much: what it
-    removes loses user authority, which keeps a user entry enforced rather than superseding it."""
-    t = (text or "").translate(_INVISIBLE)
-    t = _ENVELOPE_RE.sub("", t)
+def split_own_words(text: str) -> tuple[str, str]:
+    """``(own, quoted)``: the part of a prompt the author wrote as their own words, and the quoted material removed
+    from it. Removed: harness envelopes found anywhere (an unclosed one runs to the end), everything after a
+    peer-message marker, fenced blocks (an unclosed fence runs to the end), inline ``` spans and code spans, and
+    ``>`` quote lines. Pasted text carries no marker in the prompt, so only visibly quoted material is removed (Role
+    Grounding Attack, arXiv 2610.38209: a preference inside a quoted conversation gets recorded as the user's own).
+    Errs toward removing too much: what it removes loses user authority, which keeps a user entry enforced."""
+    removed: list[str] = []
+
+    def cut(m: re.Match) -> str:
+        removed.append(m.group(0))
+        return "\n"
+
+    t = re.sub(r"\r\n?", "\n", (text or "").translate(_INVISIBLE))
+    t = _ENVELOPE_RE.sub(cut, t)
     i = t.find(_PEER_MARKER)
     if i >= 0:
+        removed.append(t[i:])
         t = t[:i]
-    t = _FENCE_BLOCK_RE.sub("", t)
-    t = _QUOTE_LINE_RE.sub("", t)
-    return t
+    for rx in (_FENCE_BLOCK_RE, _INLINE_FENCE_RE, _CODE_SPAN_RE, _QUOTE_LINE_RE):
+        t = rx.sub(cut, t)
+    return t, "\n".join(removed)
+
+
+def own_words(text: str) -> str:
+    """The author's own words in ``text`` (see ``split_own_words``)."""
+    return split_own_words(text)[0]
 
 
 def injected_origin(row: dict) -> bool:

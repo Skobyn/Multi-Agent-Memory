@@ -20,7 +20,7 @@ from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
 from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, own_words
+from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, split_own_words
 
 SYSTEM_PROMPT = """You maintain a decision ledger for a long-running software agent session. Context compaction will later
 destroy the conversation; the ledger is what survives. Extract ONLY durable, explicit items of these types:
@@ -176,17 +176,26 @@ def _tokens(s: str) -> list[str]:
     return re.findall(r"\w+", unicodedata.normalize("NFKC", s).casefold())
 
 
-def evidence_supported(evidence: str, user_texts: list[str], threshold: float = 0.6) -> bool | None:
-    """Is the quoted evidence found in the raw user turns? True/False, or None when it cannot be judged (fewer than
-    3 word tokens). Fuzzy on purpose: the quote may be paraphrased or truncated, so this only catches evidence that
-    has no counterpart in anything the user typed. It does not tell typed text from pasted text."""
+EVIDENCE_THRESHOLD = 0.6
+
+
+def evidence_overlap(evidence: str, texts: list[str]) -> float | None:
+    """Share of the evidence's word tokens found anywhere in ``texts``, or None when the evidence has fewer than 3."""
     ev = _tokens(evidence)
     if len(ev) < 3:
         return None
     have = set()
-    for t in user_texts:
+    for t in texts:
         have.update(_tokens(t))
-    return sum(1 for w in ev if w in have) / len(ev) >= threshold
+    return sum(1 for w in ev if w in have) / len(ev)
+
+
+def evidence_supported(evidence: str, user_texts: list[str], threshold: float = EVIDENCE_THRESHOLD) -> bool | None:
+    """Is the quoted evidence found in the raw user turns? True/False, or None when it cannot be judged (fewer than
+    3 word tokens). Fuzzy on purpose: the quote may be paraphrased or truncated, so this only catches evidence that
+    has no counterpart in anything the user typed. It does not tell typed text from pasted text."""
+    score = evidence_overlap(evidence, user_texts)
+    return None if score is None else score >= threshold
 
 
 def is_broad_falsifier(f: dict[str, Any]) -> bool:
@@ -413,11 +422,21 @@ class Extractor:
             by = "user" if str(s.get("by", "agent")).lower() == "user" and has_user_turn else "agent"
             # the user's words must be their own: a SUPERSEDE line or a reversal inside a fence, a "> " quote or a
             # harness envelope in the prompt is quoted material (Role Grounding Attack, 2610.38209). When the prompt
-            # held quoted material, evidence too short to judge is not enough either.
-            own = [own_words(t) for t in user_texts or []]
-            quoted = any(o.strip() != (t or "").strip() for o, t in zip(own, user_texts or []))
-            check = evidence_supported(str(s.get("evidence", "")), own) if by == "user" and user_texts else None
-            if by == "user" and user_texts and (check is False or (check is None and quoted)):
+            # held quoted material, evidence too short to judge is not enough, and evidence that matches the quoted
+            # material at least as well as the user's own words is the quote, not the user.
+            if by == "user" and user_texts:
+                parts = [split_own_words(t) for t in user_texts]
+                own = [o for o, _ in parts]
+                quoted = [q for _, q in parts if q.strip()]
+                ev = str(s.get("evidence", ""))
+                own_score = evidence_overlap(ev, own)
+                demote = own_score is not None and own_score < EVIDENCE_THRESHOLD
+                if quoted and not demote:
+                    q_score = evidence_overlap(ev, quoted)
+                    demote = own_score is None or (q_score is not None and q_score >= own_score)
+            else:
+                demote = False
+            if demote:
                 by = "agent"  # claimed user words that match nothing the user wrote as their own: no user authority
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
