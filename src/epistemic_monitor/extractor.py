@@ -20,7 +20,7 @@ from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
 from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected
+from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, own_words
 
 SYSTEM_PROMPT = """You maintain a decision ledger for a long-running software agent session. Context compaction will later
 destroy the conversation; the ledger is what survives. Extract ONLY durable, explicit items of these types:
@@ -411,8 +411,14 @@ class Extractor:
             if not isinstance(s, dict) or not isinstance(s.get("old"), str):
                 continue
             by = "user" if str(s.get("by", "agent")).lower() == "user" and has_user_turn else "agent"
-            if by == "user" and user_texts and evidence_supported(str(s.get("evidence", "")), user_texts) is False:
-                by = "agent"  # claimed user words that match nothing the user typed: no user authority
+            # the user's words must be their own: a SUPERSEDE line or a reversal inside a fence, a "> " quote or a
+            # harness envelope in the prompt is quoted material (Role Grounding Attack, 2610.38209). When the prompt
+            # held quoted material, evidence too short to judge is not enough either.
+            own = [own_words(t) for t in user_texts or []]
+            quoted = any(o.strip() != (t or "").strip() for o, t in zip(own, user_texts or []))
+            check = evidence_supported(str(s.get("evidence", "")), own) if by == "user" and user_texts else None
+            if by == "user" and user_texts and (check is False or (check is None and quoted)):
+                by = "agent"  # claimed user words that match nothing the user wrote as their own: no user authority
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
             ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,9 +73,37 @@ _INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-messag
                       "<local-command-stdout>", "<local-command-stderr>")
 
 
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
+
+
 def looks_injected(text: str) -> bool:
-    """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope."""
-    return (text or "").lstrip().startswith(_INJECTED_PREFIXES)
+    """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope. Zero-width
+    characters and a BOM in front of the envelope do not hide it."""
+    return (text or "").translate(_INVISIBLE).lstrip().startswith(_INJECTED_PREFIXES)
+
+
+_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr")
+_ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
+_FENCE_BLOCK_RE = re.compile(r"^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", re.DOTALL | re.MULTILINE)
+_QUOTE_LINE_RE = re.compile(r"^[ \t]*>.*$", re.MULTILINE)
+_PEER_MARKER = "Another Claude session sent a message"
+
+
+def own_words(text: str) -> str:
+    """The part of a user prompt the user wrote as their own words, not as quoted material: drops fenced code blocks
+    (an unclosed fence runs to the end), ``>`` quote lines, harness envelopes found anywhere in the text (an unclosed
+    one runs to the end), and everything after a peer-message marker. The text a user pastes is still in the prompt
+    without any marker, so this only removes what is visibly quoted (Role Grounding Attack, arXiv 2610.38209: a
+    preference inside a quoted conversation gets recorded as the user's own). Errs toward removing too much: what it
+    removes loses user authority, which keeps a user entry enforced rather than superseding it."""
+    t = (text or "").translate(_INVISIBLE)
+    t = _ENVELOPE_RE.sub("", t)
+    i = t.find(_PEER_MARKER)
+    if i >= 0:
+        t = t[:i]
+    t = _FENCE_BLOCK_RE.sub("", t)
+    t = _QUOTE_LINE_RE.sub("", t)
+    return t
 
 
 def injected_origin(row: dict) -> bool:
