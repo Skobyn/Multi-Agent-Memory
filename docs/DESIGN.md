@@ -828,3 +828,13 @@ From a MemoryDojo (2611.09721) poisoning review (`docs/RESEARCH-2026-11-13.md`):
 supersession; skipped ids are logged as `cascade_skipped`. `resolve --retire`, like `retire` and `supersede`, needs
 `by=user` for a user-authority entry; bulk `retire --provenance user` is refused; `dedupe` keeps the
 user-authority member of a group. Drift skips confirmed premises, not only `source=user` ones.
+
+## Addendum (2026-11-16): user rules keep their gate budget
+
+From `docs/RESEARCH-2026-11-16.md` (2608.25553, 2607.29167, 2609.02127). Tier 1 orders global candidates by
+authority instead of id. Up to `gate.authority_reserved_max` (3) user-authority constraint, process and
+commitment entries take the first of the `candidates_max` slots, so agent keyword hits can no longer push them
+out unscored. After a Tier 3 "consistent" verdict, a flagged user-authority entry stays a conflict in two cases:
+the command matches `_DESTRUCTIVE` and p ≥ `enforce_uncalibrated_min_p` (any flagged one when calibrated), or
+the advisor's verdict did not parse. Agent entries and trajectory text cannot authorize breaking a user rule;
+only a user supersession can.
