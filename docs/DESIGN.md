@@ -833,8 +833,8 @@ user-authority member of a group. Drift skips confirmed premises, not only `sour
 
 From `docs/RESEARCH-2026-11-16.md` (2608.25553, 2607.29167, 2609.02127). Tier 1 orders global candidates by
 authority instead of id. Up to `gate.authority_reserved_max` (3) user-authority constraint, process and
-commitment entries take the first of the `candidates_max` slots, so agent keyword hits can no longer push them
+commitment entries come right after path-scoped matches within the `candidates_max` slots, so agent keyword hits can no longer push them
 out unscored. After a Tier 3 "consistent" verdict, a flagged user-authority entry stays a conflict in two cases:
-the command matches `_DESTRUCTIVE` and p ≥ `enforce_uncalibrated_min_p` (any flagged one when calibrated), or
-the advisor's verdict did not parse. Agent entries and trajectory text cannot authorize breaking a user rule;
+the command matches `_DESTRUCTIVE` (process entries excepted), or the advisor's verdict did not parse. Either way
+the entry must meet the no-advisor bar (p ≥ `enforce_uncalibrated_min_p`, or flagged when calibrated). Agent entries and trajectory text cannot authorize breaking a user rule;
 only a user supersession can.

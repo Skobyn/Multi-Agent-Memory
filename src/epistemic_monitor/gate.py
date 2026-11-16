@@ -361,8 +361,11 @@ class GatePipeline:
         # rarely spends it on the memory that states a limit on the tempting action). Keyword hits on agent premises
         # could otherwise fill every slot, and an agent entry's flag is advisory anyway. Total stays candidates_max.
         reserve = int(self.g.get("authority_reserved_max", 3))
-        reserved = [i for i in ordered if is_reservable(by_id[i])][:max(0, reserve)]
-        ordered = reserved + [i for i in ordered if i not in reserved]
+        # Path-scoped matches stay first (scope is Tier 1's primary filter); reserved rules come before keyword,
+        # embedding and global entries.
+        scoped = [i for i in ordered if by_id[i].scope.paths]
+        reserved = [i for i in ordered if i not in scoped and is_reservable(by_id[i])][:max(0, reserve)]
+        ordered = scoped + reserved + [i for i in ordered if i not in scoped and i not in reserved]
         return [by_id[i] for i in ordered[: int(self.g.get("candidates_max", 6))]]
 
     # ---- tier 2
@@ -440,7 +443,7 @@ class GatePipeline:
             data, comp = self.llm.complete_json(ADVISOR_SYSTEM, json.dumps(payload, ensure_ascii=False), max_tokens=1000)
         except Exception as ex:  # noqa: BLE001
             return {"error": str(ex)[:200], "ms": int((time.monotonic() - t0) * 1000)}
-        verdict = str(data.get("verdict", "")).lower()
+        verdict = str(data.get("verdict", "")).strip().strip(".\"'`").strip().lower()
         unparsed = verdict not in ("consistent", "conflict", "supersede_proposed")
         if unparsed:
             verdict = "consistent"
@@ -524,7 +527,7 @@ class GatePipeline:
                 # been talked out of a user rule: its payload carries agent entries and up to 8000 chars of
                 # trajectory, and neither can authorize breaking a user rule (2607.29167, 2609.02127). Only a
                 # recorded user supersession can.
-                held = self._held_user_flags(res, by_id, calibrated, min_p)
+                held = self._held_user_flags(res, by_id, calibrated, min_p) if mode == "flagged" else []
                 if held:
                     conflicts |= set(held)
                     why = ("advisor reply did not parse" if res.advisor.get("unparsed")
@@ -540,13 +543,17 @@ class GatePipeline:
         return self._decide(res, by_id, conflicts, session_id, history)
 
     def _held_user_flags(self, res: GateResult, by_id: dict[str, Entry], calibrated: bool, min_p: float) -> list[str]:
-        user_flags = [eid for eid in res.flagged if eid in by_id and by_id[eid].user_authority]
+        """Flagged user rules a "consistent" verdict may not clear. Held only at the same bar the gate uses with no
+        advisor (calibrated tau, or p >= min_p), so the advisor can never make the gate stricter than without it.
+        Process entries are left to the advisor on destructive commands: it sees the real recent tool calls, and
+        whether the required step already ran is exactly what it is there to judge."""
+        user_flags = [eid for eid in res.flagged if eid in by_id and by_id[eid].user_authority
+                      and (calibrated or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p)]
         if res.advisor.get("unparsed"):
             return user_flags
         if not _DESTRUCTIVE.search(res.change.command or ""):
             return []
-        return [eid for eid in user_flags
-                if calibrated or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p]
+        return [eid for eid in user_flags if by_id[eid].type != "process"]
 
     def _decide(self, res: GateResult, by_id: dict[str, Entry], conflicts: set[str], session_id: str,
                 history: list[dict[str, Any]]) -> GateResult:

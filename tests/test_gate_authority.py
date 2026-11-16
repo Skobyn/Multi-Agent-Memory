@@ -101,7 +101,7 @@ def test_consistent_still_clears_user_rule_below_min_p_on_destructive_command(cf
 def test_unparsed_verdict_keeps_user_flag(cfg, store):
     e = make_entry(store, statement="Use PostgreSQL as the primary database.")
     llm = FakeLLM([{"verdict": "looks fine to me", "entry_ids": [], "next_step": "", "reason": ""}])
-    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.8), llm=llm)
+    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.95), llm=llm)
     res = pipe.evaluate("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "import pymongo"}, "s1")
     assert res.advisor["unparsed"] is True and res.conflicts == [e.id] and res.decision == "deny"
 
@@ -109,6 +109,40 @@ def test_unparsed_verdict_keeps_user_flag(cfg, store):
 def test_unparsed_verdict_still_clears_agent_flag(cfg, store):
     make_entry(store, statement="Use PostgreSQL as the primary database.", source="agent", confirmed=False)
     llm = FakeLLM([{"verdict": "???", "entry_ids": []}])
-    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.8), llm=llm)
+    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.95), llm=llm)
     res = pipe.evaluate("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "import pymongo"}, "s1")
     assert res.conflicts == [] and res.decision == "allow"
+
+
+def test_unparsed_verdict_below_min_p_is_no_stricter_than_an_advisor_error(cfg, store):
+    make_entry(store, statement="Use PostgreSQL as the primary database.")
+    llm = FakeLLM([{"verdict": "fine", "entry_ids": []}])
+    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.8), llm=llm)
+    res = pipe.evaluate("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "import pymongo"}, "s1")
+    assert res.decision == "allow"
+
+
+def test_verdict_punctuation_is_tolerated(cfg, store):
+    make_entry(store, statement="Use PostgreSQL as the primary database.")
+    llm = FakeLLM([{"verdict": " Consistent. ", "entry_ids": []}])
+    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.95), llm=llm)
+    res = pipe.evaluate("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "ttl = 30"}, "s1")
+    assert res.advisor["unparsed"] is False and res.decision == "allow"
+
+
+def test_advisor_still_clears_satisfied_process_on_destructive_command(cfg, store):
+    make_entry(store, type="process", statement="Run git fetch before git reset --hard.", source="user", confirmed=False)
+    pipe = GatePipeline(store, cfg, dm=FakeDM(default=0.95), llm=FakeLLM([{"verdict": "consistent", "entry_ids": []}]))
+    hist = [{"tool": "Bash", "command": "git fetch origin"}]
+    res = pipe.evaluate("Bash", {"command": "git reset --hard origin/main"}, "s1", history=hist)
+    assert res.decision == "allow"
+
+
+def test_path_scoped_entries_keep_priority_over_reserved_globals(cfg, store):
+    scoped = [make_entry(store, statement=f"DB rule {i}: keep the pool size at {i}.", scope={"paths": ["src/db/*"]})
+              for i in range(6)]
+    for i in range(3):
+        make_entry(store, type="constraint", statement=f"Never publish package {i}.")
+    pipe = GatePipeline(store, cfg)
+    ch = change_from_tool_input("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "b"}, str(cfg.cwd))
+    assert [e.id for e in pipe.retrieve(store.active_entries(), ch, exclude=set())] == [e.id for e in scoped]
