@@ -30,7 +30,7 @@ from .gate import GatePipeline
 from .llm import make_llm
 from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
-from .transcript import (KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, looks_injected, read_turns,
+from .transcript import (KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, looks_injected, own_words, read_turns,
                          rows_to_turns)
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
@@ -41,15 +41,20 @@ def _session(payload: dict[str, Any]) -> str:
     return str(payload.get("session_id", "") or "unknown")
 
 
-_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
-
-
 def _apply_supersede_lines(text: str, by: str, store: LedgerStore, session_id: str) -> list[dict[str, Any]]:
+    """Apply ``SUPERSEDE <id>: reason`` lines. Only lines in the author's own words count, for every author: a line
+    inside a code fence, a ``>`` quote or a harness envelope is quoted material (a PR comment, a pasted chat log, an
+    agent showing the syntax) and is ignored and logged as ``supersede_ignored_quoted``, never applied with any
+    authority."""
     applied: list[dict[str, Any]] = []
-    if by == "agent":
-        # An agent showing the syntax in a code block (e.g. telling the user how to supersede) is not a supersession.
-        text = _FENCE_RE.sub("", text or "")
-    for m in _SUPERSEDE_RE.finditer(text or ""):
+    raw = text or ""
+    own = own_words(raw)
+    own_ids = {m.group(1).upper() for m in _SUPERSEDE_RE.finditer(own)}
+    for m in _SUPERSEDE_RE.finditer(raw):
+        eid = m.group(1).upper()
+        if eid not in own_ids:
+            store.log_intervention({"kind": "supersede_ignored_quoted", "entry": eid, "by": by, "session_id": session_id})
+    for m in _SUPERSEDE_RE.finditer(own):
         ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id)
         applied.append({"entry": m.group(1).upper(), "by": by, "ok": ok})
         store.log_intervention({"kind": "supersede", "entry": m.group(1).upper(), "by": by, "ok": ok,

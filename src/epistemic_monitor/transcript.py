@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,9 +73,53 @@ _INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-messag
                       "<local-command-stdout>", "<local-command-stderr>")
 
 
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
+
+
 def looks_injected(text: str) -> bool:
-    """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope."""
-    return (text or "").lstrip().startswith(_INJECTED_PREFIXES)
+    """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope. Zero-width
+    characters and a BOM in front of the envelope do not hide it."""
+    return (text or "").translate(_INVISIBLE).lstrip().startswith(_INJECTED_PREFIXES)
+
+
+_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr")
+_ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
+# a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at
+# least as long (CommonMark); an unclosed fence runs to the end
+_FENCE_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*(?:\n.*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)|\Z)", re.DOTALL | re.MULTILINE)
+_INLINE_FENCE_RE = re.compile(r"(`{3,}).*?(?:\1|\Z)", re.DOTALL)  # ```...``` mid-line, possibly spanning lines
+_CODE_SPAN_RE = re.compile(r"(`+)[^`\n]*?\1")
+_QUOTE_LINE_RE = re.compile(r"^[ \t]*>.*$", re.MULTILINE)
+_PEER_MARKER = "Another Claude session sent a message"
+
+
+def split_own_words(text: str) -> tuple[str, str]:
+    """``(own, quoted)``: the part of a prompt the author wrote as their own words, and the quoted material removed
+    from it. Removed: harness envelopes found anywhere (an unclosed one runs to the end), everything after a
+    peer-message marker, fenced blocks (an unclosed fence runs to the end), inline ``` spans and code spans, and
+    ``>`` quote lines. Pasted text carries no marker in the prompt, so only visibly quoted material is removed (Role
+    Grounding Attack, arXiv 2610.38209: a preference inside a quoted conversation gets recorded as the user's own).
+    Errs toward removing too much: what it removes loses user authority, which keeps a user entry enforced."""
+    removed: list[str] = []
+
+    def cut(m: re.Match) -> str:
+        removed.append(m.group(0))
+        return "\n"
+
+    t = re.sub(r"\r\n?", "\n", (text or "").translate(_INVISIBLE))
+    t = _ENVELOPE_RE.sub(cut, t)
+    i = t.find(_PEER_MARKER)
+    if i >= 0:
+        removed.append(t[i:])
+        t = t[:i]
+    for rx in (_FENCE_BLOCK_RE, _INLINE_FENCE_RE, _CODE_SPAN_RE, _QUOTE_LINE_RE):
+        t = rx.sub(cut, t)
+    return t, "\n".join(removed)
+
+
+def own_words(text: str) -> str:
+    """The author's own words in ``text`` (see ``split_own_words``)."""
+    return split_own_words(text)[0]
 
 
 def injected_origin(row: dict) -> bool:
