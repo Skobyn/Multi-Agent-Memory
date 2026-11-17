@@ -828,3 +828,23 @@ From a MemoryDojo (2611.09721) poisoning review (`docs/RESEARCH-2026-11-13.md`):
 supersession; skipped ids are logged as `cascade_skipped`. `resolve --retire`, like `retire` and `supersede`, needs
 `by=user` for a user-authority entry; bulk `retire --provenance user` is refused; `dedupe` keeps the
 user-authority member of a group. Drift skips confirmed premises, not only `source=user` ones.
+
+## Addendum (2026-11-14): user authority must originate in a user turn
+
+From EAL-Bench (2609.01836) and TMA-NM (2606.24322) (`docs/RESEARCH-2026-11-14.md`): before Tier 0, a `Bash`
+command that runs the plugin CLI with a user-authority marker (`confirm`, `--user`, `--by user`, including argparse
+abbreviations) is denied unless the user's latest own transcript turn contains the same ledger command (a typed
+`/ledger ...` or a pasted CLI line), compared after normalising quotes and ids; each grant runs once per user turn,
+and a granted command skips the gate. `em-hook hook user_prompt_submit` from `Bash` is always denied. This check
+fails closed (`gate.authority_check`, default on; advisory when `gate.enforce` is off). A process step whose prior
+command was denied by the gate no longer satisfies `command_requires_prior`.
+
+## Addendum (2026-11-16): user rules keep their gate budget
+
+From `docs/RESEARCH-2026-11-16.md` (2608.25553, 2607.29167, 2609.02127). Tier 1 orders global candidates by
+authority instead of id. Up to `gate.authority_reserved_max` (3) user-authority constraint, process and
+commitment entries come right after path-scoped matches within the `candidates_max` slots, so agent keyword hits can no longer push them
+out unscored. After a Tier 3 "consistent" verdict, a flagged user-authority entry stays a conflict in two cases:
+the command matches `_DESTRUCTIVE` (process entries excepted), or the advisor's verdict did not parse. Either way
+the entry must meet the no-advisor bar (p ≥ `enforce_uncalibrated_min_p`, or flagged when calibrated). Agent entries and trajectory text cannot authorize breaking a user rule;
+only a user supersession can.

@@ -50,6 +50,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "authorization_shaped_to_advisor": True,
         "tools": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
         "candidates_max": 6,
+        "authority_reserved_max": 3,          # of those, slots kept for user constraint/process/commitment entries
         "max_diff_chars": 120000,             # ≈32K tokens, the decision model's per-question default
         "tier2_time_budget_s": 1.5,
         "tier3_time_budget_s": 20,
@@ -63,6 +64,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "subagent_check": True,
         "advisor_slice_turns": 12,
         "history_max": 60,
+        "authority_check": True,              # deny Bash ledger ops with user authority the user's turn did not ask for
     },
     # Premise drift (MemTrace-style validity check): off by default; agent/summary premises only.
     "drift": {"enabled": False, "time_budget_s": 0.2, "max_paths": 10},

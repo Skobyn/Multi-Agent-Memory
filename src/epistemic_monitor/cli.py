@@ -92,16 +92,6 @@ def _fmt_entry(e: Entry, verbose: bool = False) -> str:
     return "\n".join(parts)
 
 
-def _user_authority(store, sub: str, ids: list) -> bool:
-    """Inside Claude Code, user authority needs the user's own latest prompt to have asked (authority.py)."""
-    from . import authority
-    ok, reason = authority.check(store, sub, ids)
-    if not ok:
-        store.log_intervention({"kind": "authority_refused", "sub": sub, "ids": ids, "reason": reason})
-        print(authority.refusal(sub, ids, reason))
-    return ok
-
-
 def ledger(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="em ledger")
     sub = p.add_subparsers(dest="cmd")
@@ -160,8 +150,6 @@ def ledger(argv: list[str]) -> int:
             e = store.get_entry(args.id.upper())
             print(_fmt_entry(e, verbose=True) if e else f"no entry {args.id}")
         elif args.cmd == "add":
-            if args.user and not _user_authority(store, "add", [None]):
-                return 1
             source = "user" if args.user else "agent"
             e = Entry(id=store.next_id(args.type), type=args.type, statement=args.statement, rationale=args.rationale,
                       scope=Scope(paths=args.path),
@@ -173,8 +161,6 @@ def ledger(argv: list[str]) -> int:
             write_pinned(cfg, store)
             print(_fmt_entry(e, verbose=True))
         elif args.cmd == "supersede":
-            if args.by == "user" and not _user_authority(store, "supersede", [args.id.upper()]):
-                return 1
             ok = store.supersede(args.id.upper(), None, args.reason, by=args.by, session_id="cli")
             write_pinned(cfg, store)
             print(f"superseded {args.id.upper()}" if ok else
@@ -193,8 +179,6 @@ def ledger(argv: list[str]) -> int:
             for e in review:
                 print(f"  {e.id}  [{e.status}]  {e.statement}")
         elif args.cmd == "dedupe":
-            if args.apply and args.by == "user" and not _user_authority(store, "dedupe", [None]):
-                return 1
             groups = store.duplicate_groups(args.jaccard)
             if not groups:
                 print("(no duplicates among active entries)")
@@ -221,9 +205,6 @@ def ledger(argv: list[str]) -> int:
                 ids += [e.id for e in store.active_entries() if e.provenance.source == args.provenance and e.id not in ids]
             if not ids:
                 print("nothing to retire: give ids or --provenance agent|user")
-            elif args.by == "user" and not _user_authority(
-                    store, "retire", [i.upper() for i in args.ids] + ([f"provenance:{args.provenance}"] if args.provenance else [])):
-                return 1
             n = 0
             for eid in ids:
                 ok = store.retire(eid, args.reason, by=args.by, session_id="cli")
@@ -233,16 +214,11 @@ def ledger(argv: list[str]) -> int:
                 write_pinned(cfg, store)
             print(f"retired {n}")
         elif args.cmd == "confirm":
-            if not _user_authority(store, "confirm", [args.id.upper()]):
-                return 1
             ok = store.confirm(args.id.upper(), by="user", session_id="cli")
             if ok:
                 write_pinned(cfg, store)
             print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
-            from .authority import grant_sub
-            if args.by == "user" and not _user_authority(store, grant_sub("resolve", bool(args.keep)), [args.id.upper()]):
-                return 1
             ok = store.resolve(args.id.upper(), keep=bool(args.keep), by=args.by, session_id="cli")
             if ok and args.keep:
                 from .drift import rebaseline

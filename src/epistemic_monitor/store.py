@@ -374,24 +374,6 @@ class LedgerStore:
         row = self._conn.execute("SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)).fetchone()
         return json.loads(row[0]) if row else default
 
-    def update_state(self, session_id: str, key: str, fn) -> Any:
-        """Read, transform and write one state value inside a single write transaction (BEGIN IMMEDIATE), so two
-        processes cannot both act on the same old value."""
-        conn = self._conn
-        if conn.in_transaction:
-            conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute("SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)).fetchone()
-            value = fn(json.loads(row[0]) if row else None)
-            conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
-                         (session_id, key, json.dumps(value), now_iso()))
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-        return value
-
     def set_state(self, session_id: str, key: str, value: Any) -> None:
         with self._conn:
             self._conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
