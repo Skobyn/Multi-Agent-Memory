@@ -41,8 +41,12 @@ def test_real_fixture_fully_gated_has_no_gap():
     assert ids
     cov = gate_coverage(FIX, [{"kind": "gate", "tool_use_id": i} for i in ids], TOOLS)
     assert cov["missing"] == 0 and cov["gated_tool_calls"] > 0
+    # no record at all for the session: the plugin was not running, which is not a gap
     cov = gate_coverage(FIX, [], TOOLS)
-    assert cov["missing"] == cov["gated_tool_calls"] > 0
+    assert cov["plugin_active"] is False and cov["missing"] == 0
+    # gated at first, then nothing: every later call is a gap
+    cov = gate_coverage(FIX, [{"kind": "gate", "tool_use_id": ids[0]}], TOOLS)
+    assert cov["plugin_active"] and cov["missing"] == cov["gated_tool_calls"] - 1 > 0
 
 
 def test_gap_after_compaction_and_exclusions(tmp_path):
@@ -51,7 +55,10 @@ def test_gap_after_compaction_and_exclusions(tmp_path):
             _use("u3", "t3", sidechain=True), _result("r3", "t3"),        # subagent call
             {"type": "system", "subtype": "compact_boundary", "uuid": "c1", "sessionId": "s1"},
             _use("u4", "t4", tool="Edit"), _result("r4", "t4"),
-            _use("u5", "t5")]                                             # still running: no result
+            _use("u5", "t5"),                                             # still running: no result
+            _use("u6", "t6"), {"type": "user", "uuid": "r6", "sessionId": "s1", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t6", "is_error": True,
+                 "content": "<tool_use_error>InputValidationError</tool_use_error>"}]}}]  # rejected before PreToolUse
     path = _write(tmp_path / "s1.jsonl", rows)
     cov = gate_coverage(path, [{"kind": "gate", "tool_use_id": "t1"},
                                {"kind": "hook", "event": "pre_tool_use", "tool_use_id": "t4", "ok": False, "killed": True}], TOOLS)
@@ -61,15 +68,20 @@ def test_gap_after_compaction_and_exclusions(tmp_path):
 
 
 def test_cli_coverage_reports_and_exits_nonzero(cfg, monkeypatch, capsys, tmp_path):
-    path = _write(tmp_path / "s1.jsonl", [_use("u1", "t1"), _result("r1", "t1")])
+    path = _write(tmp_path / "s1.jsonl", [_use("u1", "t1"), _result("r1", "t1"), _use("u2", "t2"), _result("r2", "t2")])
     monkeypatch.setattr(cli, "load_config", lambda: cfg)
-    assert cli.main(["ledger", "coverage", str(path)]) == 1
-    assert "GAP: 1 of 1" in capsys.readouterr().out
+    assert cli.main(["ledger", "coverage", str(path)]) == 0
+    assert "plugin not seen" in capsys.readouterr().out
     s = LedgerStore(cfg)
     s.log_intervention({"kind": "gate", "tool_use_id": "t1"})
     s.close()
+    assert cli.main(["ledger", "coverage", str(path)]) == 1
+    assert "GAP: 1 of 2" in capsys.readouterr().out
+    s = LedgerStore(cfg)
+    s.log_intervention({"kind": "gate", "tool_use_id": "t2"})
+    s.close()
     assert cli.main(["ledger", "coverage", str(path)]) == 0
-    assert "ok: all 1" in capsys.readouterr().out
+    assert "ok: all 2" in capsys.readouterr().out
 
 
 def test_hook_killed_at_timeout_leaves_a_record(cfg):
@@ -91,3 +103,16 @@ def test_hook_killed_at_timeout_leaves_a_record(cfg):
         recs = [r for r in s.recent_interventions(50) if r.get("kind") == "hook" and r.get("killed")]
         s.close()
     assert recs and recs[0]["tool_use_id"] == "tk" and recs[0]["ok"] is False and recs[0]["event"] == "pre_tool_use"
+
+
+def test_recent_interventions_reads_the_tail(cfg):
+    s = LedgerStore(cfg)
+    try:
+        for i in range(3000):
+            s.log_intervention({"kind": "x", "i": i, "pad": "p" * 100})
+        tail = s.recent_interventions(5)
+        assert [r["i"] for r in tail] == [2995, 2996, 2997, 2998, 2999]
+        assert len(s.recent_interventions(2500)) == 2500
+        assert len(s.recent_interventions(10 ** 6)) == 3000
+    finally:
+        s.close()

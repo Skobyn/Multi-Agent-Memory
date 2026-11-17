@@ -82,11 +82,14 @@ def _install_term_handler() -> None:
     instead of leaving them to launchd, and log the kill."""
     def _on_term(signum, frame):  # noqa: ANN001
         try:
+            # once: a second signal must not re-enter and log twice; log before the slower child kill
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
             try:
+                _log_killed(signum)
+            finally:
                 from .llm import kill_children
                 kill_children()
-            finally:
-                _log_killed(signum)
         except Exception:  # noqa: BLE001
             pass
         finally:

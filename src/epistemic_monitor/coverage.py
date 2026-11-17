@@ -35,6 +35,7 @@ def gate_coverage(transcript_path: str | Path, records: Iterable[dict[str, Any]]
             (killed if r.get("killed") else crashed).add(str(tid))
     calls: list[tuple[str, str, str, bool]] = []  # (id, tool, ts, after_compaction)
     results: set[str] = set()
+    rejected: set[str] = set()
     compacted = False
     session_id = ""
     for t in iter_turns(transcript_path):  # main chain only: subagent calls live in their own transcripts
@@ -45,12 +46,20 @@ def gate_coverage(transcript_path: str | Path, records: Iterable[dict[str, Any]]
             calls.append((t.tool_use_id, t.tool_name, t.timestamp, compacted))
         elif t.kind == KIND_TOOL_RESULT and t.tool_use_id:
             results.add(t.tool_use_id)
-    # a call with no result yet is still running (or the session is): not a gap
-    done = [c for c in calls if c[0] in results]
+            if t.extra.get("is_error") and "<tool_use_error>" in (t.text or "")[:200]:
+                rejected.add(t.tool_use_id)
+    # a call with no result yet is still running (or the session is): not a gap. A call Claude Code rejected
+    # before running it (input validation) never reaches PreToolUse.
+    done = [c for c in calls if c[0] in results and c[0] not in rejected]
+    # only calls after the plugin is first seen in this session: before that it was not installed or not enabled
+    seen = gated_ids | killed | crashed
+    first_seen = next((k for k, c in enumerate(done) if c[0] in seen), None)
+    active = first_seen is not None
+    done = done[first_seen:] if active else []
     missing = [c for c in done if c[0] not in gated_ids]
     first = missing[0] if missing else None
     return {
-        "transcript": str(transcript_path), "session_id": session_id,
+        "transcript": str(transcript_path), "session_id": session_id, "plugin_active": active,
         "gated_tool_calls": len(done), "missing": len(missing),
         "missing_after_compaction": sum(1 for c in missing if c[3]),
         "killed": sum(1 for c in missing if c[0] in killed),

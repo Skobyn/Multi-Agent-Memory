@@ -28,6 +28,8 @@ from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, Turn, read_turns
 def _coverage_line(cov: dict | None) -> str:
     if cov is None:
         return "no transcript found for this project"
+    if not cov.get("plugin_active"):
+        return "plugin not seen in the latest session (not installed or not enabled then); nothing to compare"
     if not cov["missing"]:
         return f"ok: all {cov['gated_tool_calls']} gated tool calls in the latest session passed the gate"
     f = cov["first_missed"]
@@ -37,15 +39,18 @@ def _coverage_line(cov: dict | None) -> str:
             + (" after a compaction" if f["after_compaction"] else ""))
 
 
-def _status_dict(cfg, store) -> dict:
+def _status_dict(cfg, store, coverage: bool = True) -> dict:
     counts = {s: len(store.entries(s)) for s in ("active", "superseded", "orphaned", "unknown_current", "retired")}
-    recent = store.recent_interventions(10)
-    from .coverage import coverage_for
-    try:
-        cov = _coverage_line(coverage_for(cfg))
-    except Exception as e:  # noqa: BLE001 - status must always print
-        cov = f"unavailable: {type(e).__name__}"
-    hook_errors = sum(1 for r in store.recent_interventions(2000) if r.get("kind") == "hook" and r.get("ok") is False)
+    tail = store.recent_interventions(2000)
+    recent = tail[-10:]
+    cov = "skipped"
+    if coverage:  # a human asked (`ledger status`); the MCP tool skips the transcript scan
+        from .coverage import coverage_for
+        try:
+            cov = _coverage_line(coverage_for(cfg))
+        except Exception as e:  # noqa: BLE001 - status must always print
+            cov = f"unavailable: {type(e).__name__}"
+    hook_errors = sum(1 for r in tail if r.get("kind") == "hook" and r.get("ok") is False)
     return {
         "version": __version__, "data_dir": str(cfg.data_dir), "entries": counts,
         "decision_model": f"{cfg.get('decision_model', 'provider')}:{cfg.get('decision_model', 'model')}",
@@ -216,7 +221,8 @@ def ledger(argv: list[str]) -> int:
                 ids += [e.id for e in store.active_entries() if e.provenance.source == args.provenance and e.id not in ids]
             if not ids:
                 print("nothing to retire: give ids or --provenance agent|user")
-            elif args.by == "user" and not _user_authority(store, "retire", ids):
+            elif args.by == "user" and not _user_authority(
+                    store, "retire", [i.upper() for i in args.ids] + ([f"provenance:{args.provenance}"] if args.provenance else [])):
                 return 1
             n = 0
             for eid in ids:
@@ -234,7 +240,8 @@ def ledger(argv: list[str]) -> int:
                 write_pinned(cfg, store)
             print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
-            if args.by == "user" and not _user_authority(store, "resolve", [args.id.upper()]):
+            from .authority import grant_sub
+            if args.by == "user" and not _user_authority(store, grant_sub("resolve", bool(args.keep)), [args.id.upper()]):
                 return 1
             ok = store.resolve(args.id.upper(), keep=bool(args.keep), by=args.by, session_id="cli")
             if ok and args.keep:
