@@ -50,6 +50,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "authorization_shaped_to_advisor": True,
         "tools": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
         "candidates_max": 6,
+        "authority_reserved_max": 3,          # of those, slots kept for user constraint/process/commitment entries
         "max_diff_chars": 120000,             # ≈32K tokens, the decision model's per-question default
         "tier2_time_budget_s": 1.5,
         "tier3_time_budget_s": 20,
