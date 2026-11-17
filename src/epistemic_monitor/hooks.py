@@ -10,6 +10,7 @@ under the authority rule. Gate Tiers 1–3 are Phase 2.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -18,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import background, hooklib
+from . import authority, background, hooklib
 from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
@@ -120,6 +121,17 @@ def _tail_turns(transcript_path: str | None, max_bytes: int = 400_000) -> list:
             continue
         turns.extend(t for t in rows_to_turns(row) if not t.is_sidechain)
     return turns
+
+
+def _last_human_text(transcript_path: str | None, max_bytes: int = 400_000) -> str | None:
+    """Text of the user's latest own turn (role-typed, harness envelopes and meta rows excluded); None if unknown."""
+    if not transcript_path or not Path(transcript_path).exists():
+        return None
+    last = ""
+    for t in _tail_turns(transcript_path, max_bytes):
+        if t.is_human:
+            last = t.text
+    return last
 
 
 def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
@@ -464,6 +476,30 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     tool = str(payload.get("tool_name") or "")
     if tool not in cfg.get("gate", "tools", []):
         return None
+    if tool == "Bash" and cfg.get("gate", "authority_check", True):
+        ti = payload.get("tool_input")
+        command = str(ti.get("command") or "") if isinstance(ti, dict) else ""
+        if authority.needs_check(command):
+            enforce = bool(cfg.get("gate", "enforce", True))
+            try:
+                user_text = _last_human_text(payload.get("transcript_path"), 4_000_000)
+                turn = hashlib.sha256((user_text or "").encode("utf-8")).hexdigest()[:16]
+                used_state = store.get_state(sid, "authority_used", {}) or {}
+                used = {tuple(x) for x in used_state.get("ops", [])} if used_state.get("turn") == turn else set()
+                reason, granted = authority.check(command, user_text, used)
+            except Exception as e:  # noqa: BLE001 - this check fails closed, unlike the rest of the gate
+                reason, granted = f"Epistemic monitor: the ledger authority check failed ({type(e).__name__}); not running it.", []
+            if reason:
+                store.log_intervention({"kind": "authority_check", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
+                                        "command": command[:300], "enforce": enforce, "decision": "deny" if enforce else "advisory"})
+                return hooklib.deny("pre_tool_use", reason) if enforce else hooklib.additional_context("pre_tool_use", reason)
+            if granted:
+                # the user typed this exact ledger command: a ledger edit is not a project change, so the gate does not
+                # score it against the ledger (an extracted agent rule must not veto the user's own /ledger confirm)
+                store.set_state(sid, "authority_used", {"turn": turn, "ops": sorted([list(x) for x in used | set(granted)])})
+                store.log_intervention({"kind": "authority_check", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
+                                        "command": command[:300], "decision": "granted"})
+                return None
     history = list(store.get_state(sid, "tool_history", []) or [])
     entries = store.active_entries()
     dm = _dm_for(cfg, store) if entries else None
@@ -556,8 +592,9 @@ def stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, 
 def subagent_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     active = store.active_entries()
     text, omitted = render_pinned_ex(active, None, 15, 3000, title="Project decisions you must honor")
-    store.log_intervention({"kind": "subagent_start", "session_id": _session(payload),
+    store.log_intervention({"kind": "subagent_start", "session_id": _session(payload), "agent_id": payload.get("agent_id"),
                             "agent_type": payload.get("agent_type"), "active_entries": len(active),
+                            "payload_keys": sorted(payload),
                             "omitted": omitted})
     if not active:
         return None

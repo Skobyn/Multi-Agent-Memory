@@ -828,3 +828,13 @@ From a MemoryDojo (2611.09721) poisoning review (`docs/RESEARCH-2026-11-13.md`):
 supersession; skipped ids are logged as `cascade_skipped`. `resolve --retire`, like `retire` and `supersede`, needs
 `by=user` for a user-authority entry; bulk `retire --provenance user` is refused; `dedupe` keeps the
 user-authority member of a group. Drift skips confirmed premises, not only `source=user` ones.
+
+## Addendum (2026-11-14): user authority must originate in a user turn
+
+From EAL-Bench (2609.01836) and TMA-NM (2606.24322) (`docs/RESEARCH-2026-11-14.md`): before Tier 0, a `Bash`
+command that runs the plugin CLI with a user-authority marker (`confirm`, `--user`, `--by user`, including argparse
+abbreviations) is denied unless the user's latest own transcript turn contains the same ledger command (a typed
+`/ledger ...` or a pasted CLI line), compared after normalising quotes and ids; each grant runs once per user turn,
+and a granted command skips the gate. `em-hook hook user_prompt_submit` from `Bash` is always denied. This check
+fails closed (`gate.authority_check`, default on; advisory when `gate.enforce` is off). A process step whose prior
+command was denied by the gate no longer satisfies `command_requires_prior`.

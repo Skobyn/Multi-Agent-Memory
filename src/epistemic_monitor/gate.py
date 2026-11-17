@@ -193,7 +193,7 @@ def evaluate_falsifiers(entry: Entry, change: Change, cwd: str, history: list[di
                 trips.append(Trip(entry.id, kind, f"command matches forbidden pattern {f['pattern']!r}"))
             elif kind == "command_requires_prior" and change.tool == "Bash" and re.search(f["pattern"], change.command):
                 window = int(f.get("window", 20))
-                recent = [h for h in history[-window:] if h.get("tool") == "Bash"]
+                recent = [h for h in history[-window:] if h.get("tool") == "Bash" and h.get("decision") != "deny"]
                 if not any(re.search(f["prior_pattern"], str(h.get("command", ""))) for h in recent):
                     trips.append(Trip(entry.id, kind, f"command matches {f['pattern']!r} but nothing matching "
                                                       f"{f['prior_pattern']!r} ran in the last {window} tool calls"))
@@ -216,7 +216,7 @@ def satisfied_process_falsifier(entry: Entry, change: Change, history: list[dict
             if not re.search(f["pattern"], change.command):
                 continue
             window = int(f.get("window", 20))
-            recent = [h for h in history[-window:] if h.get("tool") == "Bash"]
+            recent = [h for h in history[-window:] if h.get("tool") == "Bash" and h.get("decision") != "deny"]
             if any(re.search(f["prior_pattern"], str(h.get("command", ""))) for h in recent):
                 return True
         except (re.error, KeyError):
