@@ -60,13 +60,35 @@ def block(reason: str) -> dict[str, Any]:
     return {"decision": "block", "reason": reason[:10000]}
 
 
+# What the running hook is, so a kill at the timeout still leaves a record (docs/RESEARCH-2026-11-17.md I2):
+# a PreToolUse killed at 25 s used to fail open with no trace at all.
+_CURRENT: dict[str, Any] = {}
+
+
+def _log_killed(signum: int) -> None:
+    store = _CURRENT.get("store")
+    if store is None:
+        return
+    store.log_intervention({
+        "kind": "hook", "event": _CURRENT.get("event"), "session_id": _CURRENT.get("session_id", ""),
+        "tool_use_id": _CURRENT.get("tool_use_id"), "ok": False, "killed": True,
+        "duration_ms": int((time.monotonic() - _CURRENT.get("t0", time.monotonic())) * 1000),
+        "error": f"killed by signal {signum} (hook timeout?)", "emitted": [],
+    })
+
+
 def _install_term_handler() -> None:
     """When Claude Code kills a hook at its timeout, take the hook's own children (a `claude -p` call) with it
-    instead of leaving them to launchd."""
+    instead of leaving them to launchd, and log the kill."""
     def _on_term(signum, frame):  # noqa: ANN001
         try:
-            from .llm import kill_children
-            kill_children()
+            try:
+                from .llm import kill_children
+                kill_children()
+            finally:
+                _log_killed(signum)
+        except Exception:  # noqa: BLE001
+            pass
         finally:
             os._exit(0)
     try:
@@ -94,6 +116,8 @@ def run(event: str, handler: Handler, payload: dict[str, Any] | None = None, std
     try:
         cfg = load_config(payload.get("cwd"))
         store = LedgerStore(cfg)
+        _CURRENT.update(store=store, event=event, session_id=payload.get("session_id", ""),
+                        tool_use_id=payload.get("tool_use_id"), t0=t0)
         output = handler(payload, cfg, store)
         if store.dirty and event != "post_compact":
             # A supersede, retirement or new entry made inside a hook must reach pinned.md and the MEMORY.md
@@ -109,11 +133,12 @@ def run(event: str, handler: Handler, payload: dict[str, Any] | None = None, std
             try:
                 store.log_intervention({
                     "kind": "hook", "event": event, "session_id": payload.get("session_id", ""),
-                    "duration_ms": ms, "ok": error is None, "error": error,
+                    "tool_use_id": payload.get("tool_use_id"), "duration_ms": ms, "ok": error is None, "error": error,
                     "emitted": sorted(output.keys()) if output else [],
                 })
             except Exception:  # noqa: BLE001
                 pass
+            _CURRENT.clear()
             store.close()
         elif error:
             sys.stderr.write(f"epistemic-monitor {event}: {error}\n")

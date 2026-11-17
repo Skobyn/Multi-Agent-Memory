@@ -25,16 +25,34 @@ from .store import LedgerStore
 from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, Turn, read_turns
 
 
+def _coverage_line(cov: dict | None) -> str:
+    if cov is None:
+        return "no transcript found for this project"
+    if not cov["missing"]:
+        return f"ok: all {cov['gated_tool_calls']} gated tool calls in the latest session passed the gate"
+    f = cov["first_missed"]
+    return (f"GAP: {cov['missing']} of {cov['gated_tool_calls']} gated tool calls ran with no gate record"
+            f" ({cov['missing_after_compaction']} after a compaction, {cov['killed']} killed at the hook timeout,"
+            f" {cov['crashed']} crashed); first {f['tool']} {f['tool_use_id']} at {f['ts']}"
+            + (" after a compaction" if f["after_compaction"] else ""))
+
+
 def _status_dict(cfg, store) -> dict:
     counts = {s: len(store.entries(s)) for s in ("active", "superseded", "orphaned", "unknown_current", "retired")}
     recent = store.recent_interventions(10)
+    from .coverage import coverage_for
+    try:
+        cov = _coverage_line(coverage_for(cfg))
+    except Exception as e:  # noqa: BLE001 - status must always print
+        cov = f"unavailable: {type(e).__name__}"
+    hook_errors = sum(1 for r in store.recent_interventions(2000) if r.get("kind") == "hook" and r.get("ok") is False)
     return {
         "version": __version__, "data_dir": str(cfg.data_dir), "entries": counts,
         "decision_model": f"{cfg.get('decision_model', 'provider')}:{cfg.get('decision_model', 'model')}",
         "extractor": f"{cfg.get('extractor', 'provider')}:{cfg.get('extractor', 'model')}",
         "advisor": f"{cfg.get('advisor', 'provider')}:{cfg.get('advisor', 'model')}",
         "gate_enforce": cfg.get("gate", "enforce"), "recent_events": [r.get("kind") for r in recent],
-        "pinned": cfg.pinned_path.exists(),
+        "pinned": cfg.pinned_path.exists(), "hook_errors_recent": hook_errors, "gate_coverage": cov,
     }
 
 
@@ -69,6 +87,16 @@ def _fmt_entry(e: Entry, verbose: bool = False) -> str:
     return "\n".join(parts)
 
 
+def _user_authority(store, sub: str, ids: list) -> bool:
+    """Inside Claude Code, user authority needs the user's own latest prompt to have asked (authority.py)."""
+    from . import authority
+    ok, reason = authority.check(store, sub, ids)
+    if not ok:
+        store.log_intervention({"kind": "authority_refused", "sub": sub, "ids": ids, "reason": reason})
+        print(authority.refusal(sub, ids, reason))
+    return ok
+
+
 def ledger(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="em ledger")
     sub = p.add_subparsers(dest="cmd")
@@ -98,6 +126,8 @@ def ledger(argv: list[str]) -> int:
     s_res.add_argument("--by", choices=("user", "agent"), default="agent")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
+    s_cov = sub.add_parser("coverage", help="read-only: tool calls in a transcript that ran with no gate record (hooks not firing)")
+    s_cov.add_argument("transcript", nargs="?", default=None, help="default: the project's most recent session")
     sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
     s_fb = sub.add_parser("feedback", help="read-only: entries often flagged then superseded by the user, and noisy flags labeled ok")
     s_fb.add_argument("--min-flags", type=int, default=3)
@@ -125,6 +155,8 @@ def ledger(argv: list[str]) -> int:
             e = store.get_entry(args.id.upper())
             print(_fmt_entry(e, verbose=True) if e else f"no entry {args.id}")
         elif args.cmd == "add":
+            if args.user and not _user_authority(store, "add", [None]):
+                return 1
             source = "user" if args.user else "agent"
             e = Entry(id=store.next_id(args.type), type=args.type, statement=args.statement, rationale=args.rationale,
                       scope=Scope(paths=args.path),
@@ -136,6 +168,8 @@ def ledger(argv: list[str]) -> int:
             write_pinned(cfg, store)
             print(_fmt_entry(e, verbose=True))
         elif args.cmd == "supersede":
+            if args.by == "user" and not _user_authority(store, "supersede", [args.id.upper()]):
+                return 1
             ok = store.supersede(args.id.upper(), None, args.reason, by=args.by, session_id="cli")
             write_pinned(cfg, store)
             print(f"superseded {args.id.upper()}" if ok else
@@ -154,6 +188,8 @@ def ledger(argv: list[str]) -> int:
             for e in review:
                 print(f"  {e.id}  [{e.status}]  {e.statement}")
         elif args.cmd == "dedupe":
+            if args.apply and args.by == "user" and not _user_authority(store, "dedupe", [None]):
+                return 1
             groups = store.duplicate_groups(args.jaccard)
             if not groups:
                 print("(no duplicates among active entries)")
@@ -180,6 +216,8 @@ def ledger(argv: list[str]) -> int:
                 ids += [e.id for e in store.active_entries() if e.provenance.source == args.provenance and e.id not in ids]
             if not ids:
                 print("nothing to retire: give ids or --provenance agent|user")
+            elif args.by == "user" and not _user_authority(store, "retire", ids):
+                return 1
             n = 0
             for eid in ids:
                 ok = store.retire(eid, args.reason, by=args.by, session_id="cli")
@@ -189,11 +227,15 @@ def ledger(argv: list[str]) -> int:
                 write_pinned(cfg, store)
             print(f"retired {n}")
         elif args.cmd == "confirm":
+            if not _user_authority(store, "confirm", [args.id.upper()]):
+                return 1
             ok = store.confirm(args.id.upper(), by="user", session_id="cli")
             if ok:
                 write_pinned(cfg, store)
             print(f"confirmed {args.id.upper()}" if ok else f"{args.id.upper()} is not an active unconfirmed entry")
         elif args.cmd == "resolve":
+            if args.by == "user" and not _user_authority(store, "resolve", [args.id.upper()]):
+                return 1
             ok = store.resolve(args.id.upper(), keep=bool(args.keep), by=args.by, session_id="cli")
             if ok and args.keep:
                 from .drift import rebaseline
@@ -206,6 +248,13 @@ def ledger(argv: list[str]) -> int:
                 print(json.dumps(r, ensure_ascii=False)[:400])
         elif args.cmd == "status":
             print(json.dumps(_status_dict(cfg, store), indent=2))
+        elif args.cmd == "coverage":
+            from .coverage import coverage_for
+            cov = coverage_for(cfg, args.transcript)
+            print(_coverage_line(cov))
+            if cov and cov["missing"]:
+                print(json.dumps(cov, indent=2))
+                return 1
         elif args.cmd == "doctor":
             from .doctor import main as doctor_main
             return doctor_main([])

@@ -74,6 +74,18 @@ def run_checks(cfg: Config) -> list[dict[str, Any]]:
             add(label, False, f"{type(e).__name__}: {str(e)[:160]}", required=False)
     add("gate", bool(cfg.get("gate", "enforce", True)), "enforce=" + str(cfg.get("gate", "enforce", True)) +
         f", deny_budget={cfg.get('gate', 'deny_budget', 5)}", required=False)
+    try:
+        from .coverage import coverage_for
+        cov = coverage_for(cfg)
+        if cov is None:
+            add("gate coverage", None, "no transcript for this project yet", required=False)
+        else:
+            add("gate coverage", cov["missing"] == 0,
+                f"{cov['missing']} of {cov['gated_tool_calls']} gated calls in the latest session had no gate record"
+                + (f" (first {cov['first_missed']['tool_use_id']}; run `ledger coverage`)" if cov["missing"] else ""),
+                required=False)
+    except Exception as e:  # noqa: BLE001
+        add("gate coverage", None, f"unavailable: {type(e).__name__}", required=False)
     return checks
 
 

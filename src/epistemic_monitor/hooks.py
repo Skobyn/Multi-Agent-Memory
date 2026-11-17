@@ -436,8 +436,13 @@ def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
 def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
+    if not looks_injected(prompt):
+        # First, before the slow extraction: this hook is async, and the agent's `ledger confirm` call that the
+        # grant authorizes can arrive while it is still running (authority.py).
+        from .authority import record_grants
+        record_grants(store, sid, prompt)
     # a harness envelope delivered as a prompt (a background task's result, another agent's message) is not the user
-    applied = _apply_supersede_lines(prompt, "agent" if looks_injected(prompt) else "user", store, sid)
+    applied =_apply_supersede_lines(prompt, "agent" if looks_injected(prompt) else "user", store, sid)
     record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
     if cfg.get("extraction", "incremental", True) and len(prompt.strip()) >= 12:
         last = float(store.get_state(sid, "last_extraction_ts", 0) or 0)

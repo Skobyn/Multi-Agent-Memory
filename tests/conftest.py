@@ -11,6 +11,14 @@ from epistemic_monitor.config import load_config  # noqa: E402
 from epistemic_monitor.store import LedgerStore  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _outside_claude_code(monkeypatch):
+    # The suite may itself run inside a Claude Code session; the CLI's user-authority grant check
+    # (authority.py) keys on these. Tests that need them set them explicitly.
+    for k in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID"):
+        monkeypatch.delenv(k, raising=False)
+
+
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     d = tmp_path / "epistemic"
