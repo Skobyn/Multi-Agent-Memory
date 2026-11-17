@@ -60,7 +60,7 @@ def call_tool(name: str, args: dict[str, Any], cfg, store: LedgerStore) -> dict[
         return _text(render_briefing(active, store.needs_review(), int(args.get("max_entries", 25) or 25), 9000))
     if name == "ledger_status":
         from .cli import _status_dict
-        return _text(json.dumps(_status_dict(cfg, store), indent=2))
+        return _text(json.dumps(_status_dict(cfg, store, coverage=False), indent=2))
     if name == "ledger_supersede":
         eid, reason = str(args.get("id", "")).upper().strip(), str(args.get("reason", "")).strip()
         if not eid or not reason:

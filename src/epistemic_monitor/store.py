@@ -389,7 +389,21 @@ class LedgerStore:
         p = self.config.interventions_path
         if not p.exists():
             return []
-        lines = p.read_text(encoding="utf-8").splitlines()[-n:]
+        # read from the end: the log is append-only and never trimmed, so loading it whole grows without bound
+        size = p.stat().st_size
+        chunk = 64 * 1024
+        with open(p, "rb") as fh:
+            while True:
+                start = max(0, size - chunk)
+                fh.seek(start)
+                data = fh.read(size - start)
+                lines = data.splitlines()
+                if start > 0:
+                    lines = lines[1:]  # the first line may be cut
+                if start == 0 or len(lines) >= n:
+                    break
+                chunk *= 4
+        lines = [l.decode("utf-8", errors="replace") for l in lines[-n:]]
         out = []
         for line in lines:
             try:

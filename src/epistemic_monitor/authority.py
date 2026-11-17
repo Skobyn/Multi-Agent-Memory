@@ -31,21 +31,71 @@ _MARKER_RE = re.compile(r"\bconfirm\b|--u(?:s(?:er?)?)?(?![\w-])|--by?(?:=|\s+)[
 _HOOK_UPS_RE = re.compile(r"\bhook\b.*user[_-]prompt[_-]submit", re.IGNORECASE | re.DOTALL)
 _LEDGER_ARGS_RE = re.compile(r"<command-name>/?(?:[\w.-]+:)?ledger</command-name>\s*<command-args>(.*?)</command-args>",
                              re.DOTALL)
-# one ledger invocation's arguments: from `ledger` to the next shell separator or redirection
-_INVOCATION_RE = re.compile(r"\bledger['\"]?\s+([^;&|\n<>`]*)")
-_REDIRECT_RE = re.compile(r"\s\d*[<>]+&?\d*")
+# a redirection token: `2>&1`, `>`, `>>`, `<`, `>out.txt`
+_REDIRECT_TOK_RE = re.compile(r"^\d*(?:>>?|<)(&\d*|.*)$")
+_SEPARATORS = ";&|\n()`"
 
 
 def _canon_id(m: re.Match) -> str:
     return f"{m.group(1).upper()}-{int(m.group(2)):04d}"
 
 
-def normalize(args: str) -> tuple[str, ...]:
+def segments(text: str) -> list[str] | None:
+    """Simple commands in a shell string, split at ``; & | newline ( ) ` `` outside quotes (an ``&`` right after ``<``
+    or ``>`` is part of a redirection). None when the quotes do not balance: nothing can be compared exactly then.
+    Separators inside quotes are argument text (review of #25: ``--statement "a; b"`` must not end the invocation)."""
+    segs: list[str] = []
+    cur: list[str] = []
+    quote: str | None = None
+    i, n = 0, len(text or "")
+    while i < n:
+        c = text[i]
+        if quote:
+            cur.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                cur.append(text[i + 1]); i += 2; continue
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c; cur.append(c)
+        elif c == "\\" and i + 1 < n:
+            cur.append(c); cur.append(text[i + 1]); i += 2; continue
+        elif c in _SEPARATORS and not (c == "&" and cur and cur[-1] in "<>"):
+            segs.append("".join(cur)); cur = []
+        else:
+            cur.append(c)
+        i += 1
+    if quote:
+        return None
+    segs.append("".join(cur))
+    return [x for x in segs if x.strip()]
+
+
+def _tokens(segment: str) -> list[str]:
+    """shlex tokens of one simple command, redirections dropped."""
+    out: list[str] = []
+    toks = shlex.split(segment)
+    skip = False
+    for t in toks:
+        if skip:
+            skip = False
+            continue
+        if _REDIRECT_TOK_RE.match(t):
+            skip = t.rstrip("0123456789") in (">", ">>", "<")  # a bare operator: its target is the next token
+            continue
+        out.append(t)
+    return out
+
+
+def normalize(args: str | list[str]) -> tuple[str, ...]:
     """Ledger arguments as comparable tokens: shell-split, quotes dropped, ids canonical, ``--by=user`` split."""
-    try:
-        toks = shlex.split(args)
-    except ValueError:
-        toks = args.split()
+    if isinstance(args, str):
+        try:
+            toks = shlex.split(args)
+        except ValueError:
+            toks = args.split()
+    else:
+        toks = list(args)
     out: list[str] = []
     for t in toks:
         t = t.strip("'\"")
@@ -63,16 +113,46 @@ def needs_check(command: str) -> bool:
 
 
 def invocations(command: str) -> list[tuple[str, ...]]:
-    """Normalised argument lists of every ``ledger ...`` invocation in a command or a user's text."""
-    text = _REDIRECT_RE.sub(" ; ", command or "")      # `2>&1`, `> out.txt` end an invocation
-    return [normalize(m.group(1)) for m in _INVOCATION_RE.finditer(text)]
+    """Normalised argument lists of every ``ledger ...`` invocation in a command, compared whole: quote-aware, so
+    shell punctuation inside a quoted argument stays in that argument. Unbalanced quotes yield nothing."""
+    out: list[tuple[str, ...]] = []
+    for seg in segments(command or "") or []:
+        try:
+            toks = _tokens(seg)
+        except ValueError:
+            continue
+        for k, t in enumerate(toks):
+            if t == "ledger" or t.endswith("/ledger"):
+                out.append(normalize(toks[k + 1:]))
+                break
+    return out
+
+
+def only_ledger(command: str) -> bool:
+    """Is this Bash call nothing but ledger CLI invocations? Only then may a granted command skip the gate (review
+    of #25: ``em-hook ledger confirm D-0007 && rm x`` must still be gated for the ``rm``)."""
+    if not command or "$(" in command or "`" in command:
+        return False
+    segs = segments(command)
+    if not segs:
+        return False
+    for seg in segs:
+        try:
+            toks = _tokens(seg)
+        except ValueError:
+            return False
+        if not (_CLI_RE.search(seg) and any(t == "ledger" or t.endswith("/ledger") for t in toks)):
+            return False
+    return True
 
 
 def granted_invocations(user_text: str) -> list[tuple[str, ...]]:
-    """Ledger commands the user's own turn spells out: a ``/ledger`` slash command, or a pasted CLI line."""
+    """Ledger commands the user's own turn spells out: a ``/ledger`` slash command, or a pasted CLI line (one line;
+    a line whose quotes do not balance grants nothing)."""
     out = [inv for m in _LEDGER_ARGS_RE.finditer(user_text or "") for inv in invocations("ledger " + m.group(1))]
-    if _CLI_RE.search(user_text or ""):
-        out.extend(invocations(user_text))
+    for line in (user_text or "").splitlines():
+        if _CLI_RE.search(line):
+            out.extend(invocations(line))
     return out
 
 

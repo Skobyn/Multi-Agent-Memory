@@ -25,16 +25,39 @@ from .store import LedgerStore
 from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, Turn, read_turns
 
 
-def _status_dict(cfg, store) -> dict:
+def _coverage_line(cov: dict | None) -> str:
+    if cov is None:
+        return "no transcript found for this project"
+    if not cov.get("plugin_active"):
+        return "plugin not seen in the latest session (not installed or not enabled then); nothing to compare"
+    if not cov["missing"]:
+        return f"ok: all {cov['gated_tool_calls']} gated tool calls in the latest session passed the gate"
+    f = cov["first_missed"]
+    return (f"GAP: {cov['missing']} of {cov['gated_tool_calls']} gated tool calls ran with no gate record"
+            f" ({cov['missing_after_compaction']} after a compaction, {cov['killed']} killed at the hook timeout,"
+            f" {cov['crashed']} crashed); first {f['tool']} {f['tool_use_id']} at {f['ts']}"
+            + (" after a compaction" if f["after_compaction"] else ""))
+
+
+def _status_dict(cfg, store, coverage: bool = True) -> dict:
     counts = {s: len(store.entries(s)) for s in ("active", "superseded", "orphaned", "unknown_current", "retired")}
-    recent = store.recent_interventions(10)
+    tail = store.recent_interventions(2000)
+    recent = tail[-10:]
+    cov = "skipped"
+    if coverage:  # a human asked (`ledger status`); the MCP tool skips the transcript scan
+        from .coverage import coverage_for
+        try:
+            cov = _coverage_line(coverage_for(cfg))
+        except Exception as e:  # noqa: BLE001 - status must always print
+            cov = f"unavailable: {type(e).__name__}"
+    hook_errors = sum(1 for r in tail if r.get("kind") == "hook" and r.get("ok") is False)
     return {
         "version": __version__, "data_dir": str(cfg.data_dir), "entries": counts,
         "decision_model": f"{cfg.get('decision_model', 'provider')}:{cfg.get('decision_model', 'model')}",
         "extractor": f"{cfg.get('extractor', 'provider')}:{cfg.get('extractor', 'model')}",
         "advisor": f"{cfg.get('advisor', 'provider')}:{cfg.get('advisor', 'model')}",
         "gate_enforce": cfg.get("gate", "enforce"), "recent_events": [r.get("kind") for r in recent],
-        "pinned": cfg.pinned_path.exists(),
+        "pinned": cfg.pinned_path.exists(), "hook_errors_recent": hook_errors, "gate_coverage": cov,
     }
 
 
@@ -98,6 +121,8 @@ def ledger(argv: list[str]) -> int:
     s_res.add_argument("--by", choices=("user", "agent"), default="agent")
     s_int = sub.add_parser("interventions"); s_int.add_argument("n", nargs="?", type=int, default=20)
     sub.add_parser("status")
+    s_cov = sub.add_parser("coverage", help="read-only: tool calls in a transcript that ran with no gate record (hooks not firing)")
+    s_cov.add_argument("transcript", nargs="?", default=None, help="default: the project's most recent session")
     sub.add_parser("doctor", help="one real call per configured component: keys, decision model, advisor, extractor, embeddings")
     s_fb = sub.add_parser("feedback", help="read-only: entries often flagged then superseded by the user, and noisy flags labeled ok")
     s_fb.add_argument("--min-flags", type=int, default=3)
@@ -206,6 +231,13 @@ def ledger(argv: list[str]) -> int:
                 print(json.dumps(r, ensure_ascii=False)[:400])
         elif args.cmd == "status":
             print(json.dumps(_status_dict(cfg, store), indent=2))
+        elif args.cmd == "coverage":
+            from .coverage import coverage_for
+            cov = coverage_for(cfg, args.transcript)
+            print(_coverage_line(cov))
+            if cov and cov["missing"]:
+                print(json.dumps(cov, indent=2))
+                return 1
         elif args.cmd == "doctor":
             from .doctor import main as doctor_main
             return doctor_main([])
