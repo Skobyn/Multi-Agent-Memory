@@ -25,11 +25,15 @@ def gate_coverage(transcript_path: str | Path, records: Iterable[dict[str, Any]]
     gated_ids: set[str] = set()
     killed: set[str] = set()
     crashed: set[str] = set()
+    sessions_seen: set[str] = set()
     for r in records:
+        if r.get("session_id"):
+            sessions_seen.add(str(r["session_id"]))
         tid = r.get("tool_use_id")
         if not tid:
             continue
-        if r.get("kind") == "gate":
+        # the ledger authority check decides a Bash call before the gate and may end the hook there: that is a decision
+        if r.get("kind") in ("gate", "authority_check"):
             gated_ids.add(str(tid))
         elif r.get("kind") == "hook" and r.get("event") == "pre_tool_use" and r.get("ok") is False:
             (killed if r.get("killed") else crashed).add(str(tid))
@@ -51,11 +55,16 @@ def gate_coverage(transcript_path: str | Path, records: Iterable[dict[str, Any]]
     # a call with no result yet is still running (or the session is): not a gap. A call Claude Code rejected
     # before running it (input validation) never reaches PreToolUse.
     done = [c for c in calls if c[0] in results and c[0] not in rejected]
-    # only calls after the plugin is first seen in this session: before that it was not installed or not enabled
-    seen = gated_ids | killed | crashed
-    first_seen = next((k for k, c in enumerate(done) if c[0] in seen), None)
-    active = first_seen is not None
-    done = done[first_seen:] if active else []
+    # Any record from this session (SessionStart, a prompt, a hook) shows the plugin was running for it, so every call
+    # counts, including one after hooks died before the first gate. Without a session id to match, fall back to calls
+    # after the first one the plugin recorded. A session it never saw is not a gap: it was not installed or enabled.
+    if session_id and session_id in sessions_seen:
+        active = True
+    else:
+        seen = gated_ids | killed | crashed
+        first_seen = next((k for k, c in enumerate(done) if c[0] in seen), None)
+        active = first_seen is not None
+        done = done[first_seen:] if active else []
     missing = [c for c in done if c[0] not in gated_ids]
     first = missing[0] if missing else None
     return {

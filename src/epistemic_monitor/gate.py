@@ -363,7 +363,9 @@ class GatePipeline:
         reserve = int(self.g.get("authority_reserved_max", 3))
         # Path-scoped matches stay first (scope is Tier 1's primary filter); reserved rules come before keyword,
         # embedding and global entries.
-        scoped = [i for i in ordered if by_id[i].scope.paths]
+        # Only entries whose paths match this change: a keyword or embedding hit scoped to other paths (legacy/*) is
+        # not a scope match and must not push a user rule out of the budget (review of #27).
+        scoped = [i for i in ordered if by_id[i].scope.paths and entry_in_scope(by_id[i], change)]
         reserved = [i for i in ordered if i not in scoped and is_reservable(by_id[i])][:max(0, reserve)]
         ordered = scoped + reserved + [i for i in ordered if i not in scoped and i not in reserved]
         return [by_id[i] for i in ordered[: int(self.g.get("candidates_max", 6))]]

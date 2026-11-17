@@ -146,3 +146,17 @@ def test_path_scoped_entries_keep_priority_over_reserved_globals(cfg, store):
     pipe = GatePipeline(store, cfg)
     ch = change_from_tool_input("Edit", {"file_path": "src/db/client.py", "old_string": "a", "new_string": "b"}, str(cfg.cwd))
     assert [e.id for e in pipe.retrieve(store.active_entries(), ch, exclude=set())] == [e.id for e in scoped]
+
+
+def test_off_path_keyword_hits_do_not_outrank_a_user_rule(cfg, store):
+    """Review of #27: entries scoped to other paths that only match by keyword are not scope matches."""
+    make_entry(store, type="premise", statement="The db client lives in src/db.", source="agent", confirmed=False,
+               scope={"paths": ["src/db/*"]})
+    c = make_entry(store, type="constraint", statement="Never import pymongo MongoClient.")
+    for i in range(5):
+        make_entry(store, type="premise", statement=f"legacy module {i} imports pymongo MongoClient directly.",
+                   source="agent", confirmed=False, scope={"paths": ["legacy/*"]})
+    pipe = GatePipeline(store, cfg)
+    ch = change_from_tool_input("Edit", {"file_path": str(cfg.cwd / "src/db/client.py"), "old_string": "x",
+                                         "new_string": "from pymongo import MongoClient"}, str(cfg.cwd))
+    assert c.id in [e.id for e in pipe.retrieve(store.active_entries(), ch, exclude=set())]

@@ -120,3 +120,49 @@ def test_authority_check_advisory_when_not_enforcing(cfg, tmp_path, monkeypatch)
     out = _run("pre_tool_use", {"tool_name": "Bash", "tool_input": {"command": f"{CLI} add --type decision --statement s --user"},
                                 "transcript_path": path}, cfg)
     assert not _denied(out) and "user's authority" in out["hookSpecificOutput"]["additionalContext"]
+
+
+# ---------------------------------------------------------------- review of #25 (fixed in #28)
+def test_quoted_separators_stay_inside_the_argument():
+    user = ('<command-name>/ledger</command-name>\n<command-args>add --user --type decision '
+            '--statement "Use Postgres; never MySQL"</command-args>')
+    assert _ok('em-hook ledger add --user --type decision --statement "Use Postgres; never MySQL"', user)
+    assert not _ok('em-hook ledger add --user --type decision --statement "Use Postgres; use MySQL"', user)
+    assert authority.invocations('em-hook ledger add --statement "a | b & c" --user') == [
+        ("add", "--statement", "a | b & c", "--user")]
+    assert authority.invocations('em-hook ledger confirm "D-0007') == []      # unbalanced quotes compare as nothing
+    # prose with an apostrophe around a pasted line still grants that line
+    assert _ok(f"{CLI} confirm D-0007", "I've checked it, please run:\nem-hook ledger confirm D-0007")
+
+
+def test_only_ledger():
+    assert authority.only_ledger(f"{CLI} confirm D-0007 2>&1")
+    assert authority.only_ledger(f"{CLI} confirm D-0007 && {CLI} show D-0007")
+    assert not authority.only_ledger(f"{CLI} confirm D-0007 && rm important.txt")
+    assert not authority.only_ledger(f"{CLI} confirm D-0007 $(rm x)")
+    assert not authority.only_ledger(f"cd /tmp; {CLI} confirm D-0007")
+
+
+def test_granted_command_chained_with_another_op_is_still_gated(cfg, tmp_path, monkeypatch):
+    monkeypatch.setenv("EPISTEMIC_GATE_ENFORCE", "true")
+    monkeypatch.setenv("EPISTEMIC_EMBEDDINGS_PROVIDER", "none")
+    s = LedgerStore(cfg)
+    make_entry(s, type="constraint", statement="Never delete important.txt.",
+               falsifiers=[{"kind": "command_regex_forbidden", "pattern": r"\brm\b.*important\.txt"}])
+    s.close()
+    path = _transcript(tmp_path, SLASH)
+    out = _run("pre_tool_use", {"tool_name": "Bash", "transcript_path": path, "tool_use_id": "t9",
+                                "tool_input": {"command": f"{CLI} confirm D-0007 && rm important.txt"}}, cfg)
+    assert _denied(out) and "user's authority" not in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_same_command_typed_again_in_a_later_turn_is_a_new_grant(cfg, tmp_path):
+    payload = {"tool_name": "Bash", "tool_input": {"command": f"{CLI} confirm D-0007"}}
+    path = _transcript(tmp_path, SLASH)
+    assert _run("pre_tool_use", {**payload, "transcript_path": path}, cfg) is None
+    assert _denied(_run("pre_tool_use", {**payload, "transcript_path": path}, cfg))
+    rows = [json.loads(l) for l in open(path)]
+    rows += [{"type": "user", "uuid": "later", "isSidechain": False, "message": {"role": "user", "content": "thanks"}},
+             {"type": "user", "uuid": "again", "isSidechain": False, "message": {"role": "user", "content": SLASH}}]
+    open(path, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert _run("pre_tool_use", {**payload, "transcript_path": path}, cfg) is None

@@ -128,15 +128,20 @@ def _tail_turns(transcript_path: str | None, max_bytes: int = 400_000) -> list:
     return turns
 
 
-def _last_human_text(transcript_path: str | None, max_bytes: int = 400_000) -> str | None:
-    """Text of the user's latest own turn (role-typed, harness envelopes and meta rows excluded); None if unknown."""
+def _last_human_turn(transcript_path: str | None, max_bytes: int = 400_000) -> tuple[str | None, str]:
+    """(text, uuid) of the user's latest own turn (role-typed, harness envelopes and meta rows excluded); text is None
+    if unknown."""
     if not transcript_path or not Path(transcript_path).exists():
-        return None
-    last = ""
+        return None, ""
+    last, uuid = "", ""
     for t in _tail_turns(transcript_path, max_bytes):
         if t.is_human:
-            last = t.text
-    return last
+            last, uuid = t.text, t.uuid
+    return last, uuid
+
+
+def _last_human_text(transcript_path: str | None, max_bytes: int = 400_000) -> str | None:
+    return _last_human_turn(transcript_path, max_bytes)[0]
 
 
 def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
@@ -487,8 +492,9 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
         if authority.needs_check(command):
             enforce = bool(cfg.get("gate", "enforce", True))
             try:
-                user_text = _last_human_text(payload.get("transcript_path"), 4_000_000)
-                turn = hashlib.sha256((user_text or "").encode("utf-8")).hexdigest()[:16]
+                user_text, turn_uuid = _last_human_turn(payload.get("transcript_path"), 4_000_000)
+                # the turn's own row id, so the same command typed again in a later turn is a new grant (review of #25)
+                turn = turn_uuid or hashlib.sha256((user_text or "").encode("utf-8")).hexdigest()[:16]
                 used_state = store.get_state(sid, "authority_used", {}) or {}
                 used = {tuple(x) for x in used_state.get("ops", [])} if used_state.get("turn") == turn else set()
                 reason, granted = authority.check(command, user_text, used)
@@ -499,12 +505,15 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
                                         "command": command[:300], "enforce": enforce, "decision": "deny" if enforce else "advisory"})
                 return hooklib.deny("pre_tool_use", reason) if enforce else hooklib.additional_context("pre_tool_use", reason)
             if granted:
-                # the user typed this exact ledger command: a ledger edit is not a project change, so the gate does not
-                # score it against the ledger (an extracted agent rule must not veto the user's own /ledger confirm)
                 store.set_state(sid, "authority_used", {"turn": turn, "ops": sorted([list(x) for x in used | set(granted)])})
+                alone = authority.only_ledger(command)
                 store.log_intervention({"kind": "authority_check", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
-                                        "command": command[:300], "decision": "granted"})
-                return None
+                                        "command": command[:300], "decision": "granted", "gated": not alone})
+                if alone:
+                    # the user typed this exact ledger command: a ledger edit is not a project change, so the gate does
+                    # not score it against the ledger (an extracted agent rule must not veto the user's own /ledger
+                    # confirm). Anything chained to it (`&& rm x`) is not covered by the grant and goes through the gate.
+                    return None
     history = list(store.get_state(sid, "tool_history", []) or [])
     entries = store.active_entries()
     dm = _dm_for(cfg, store) if entries else None

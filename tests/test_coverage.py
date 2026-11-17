@@ -116,3 +116,15 @@ def test_recent_interventions_reads_the_tail(cfg):
         assert len(s.recent_interventions(10 ** 6)) == 3000
     finally:
         s.close()
+
+
+def test_session_records_start_coverage_and_authority_checks_count(tmp_path):
+    """Review of #28: a SessionStart record proves the plugin ran even if no gate record ever followed; and the ledger
+    authority check (#25) decides some Bash calls before the gate."""
+    path = _write(tmp_path / "s1.jsonl", [_use("u1", "t1"), _result("r1", "t1"), _use("u2", "t2"), _result("r2", "t2")])
+    cov = gate_coverage(path, [{"kind": "hook", "event": "session_start", "session_id": "s1"}], TOOLS)
+    assert cov["plugin_active"] and cov["missing"] == 2
+    cov = gate_coverage(path, [{"kind": "hook", "event": "session_start", "session_id": "s1"},
+                               {"kind": "authority_check", "tool_use_id": "t1", "session_id": "s1", "decision": "granted"},
+                               {"kind": "gate", "tool_use_id": "t2", "session_id": "s1"}], TOOLS)
+    assert cov["missing"] == 0
