@@ -169,6 +169,7 @@ def test_lead_handoff_ignores_advisories_by_default(cfg, store, monkeypatch):
     resp = {"agentId": "a1", "content": [{"type": "text", "text": "done"}]}
     assert _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg) is None
     monkeypatch.setenv("EPISTEMIC_GATE_SUBAGENT_HANDOFF_ADVISORIES", "true")
+    _run("pre_tool_use", {**PG_DENY, "agent_id": "a1"}, cfg)
     out = _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg)
     assert "D-0001 (1x flagged)" in out["hookSpecificOutput"]["additionalContext"]
 
@@ -181,3 +182,75 @@ def test_granted_ledger_command_refused_when_shell_would_expand():
     literal = "em-hook ledger add --type decision --statement 'Budget is $LIMIT' --user"
     assert authority.check(literal, user)[0] is None
     assert authority.expands('x "`id`"') and authority.expands("a $B") and not authority.expands(r"a \$B")
+
+
+# ------------------------------------------------------------------ second-round review (2026-11-18)
+def test_failed_run_requeues_its_prompts(cfg, store, monkeypatch):
+    _offline(monkeypatch, llm=FakeLLM(["503 overloaded, not json"]))
+    store.append_state("s1", PENDING_PROMPTS, "never touch vendor/", 8)
+    store.close()
+    _run("user_prompt_submit", {"prompt": "and always use ISO dates please"}, cfg)
+    assert _logged(cfg, "prompt")[-1]["requeued"] is True
+    assert _state(cfg, PENDING_PROMPTS) == ["never touch vendor/", "and always use ISO dates please"]
+    assert _state(cfg, EXTRACTION_INFLIGHT) == 0
+
+
+def test_worker_requeues_on_failure(cfg, store, monkeypatch):
+    _offline(monkeypatch, llm=FakeLLM(["not json"]))
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
+    store.append_state("s1", PENDING_PROMPTS, "never touch vendor/", 8)
+    store.close()
+    cli.main(["extract-prompts", "--session", "s1"])
+    assert _state(cfg, PENDING_PROMPTS) == ["never touch vendor/"]
+
+
+def test_oversized_queue_does_not_crowd_out_the_current_prompt(cfg, store, monkeypatch):
+    llm = FakeLLM([{"entries": []}])
+    _offline(monkeypatch, llm=llm)
+    for i in range(3):
+        store.append_state("s1", PENDING_PROMPTS, f"rule {i} " + "x" * 11000, 8)
+    store.close()
+    _run("user_prompt_submit", {"prompt": "actually switch the database to MySQL"}, cfg)
+    assert "switch the database to MySQL" in llm.calls[0][1] and "rule 0" not in llm.calls[0][1]
+    assert _logged(cfg, "prompt")[-1]["earlier_prompts_deferred"] == 3
+    assert len(_state(cfg, PENDING_PROMPTS)) == 3
+
+
+def test_a_run_clears_only_its_own_marker(cfg, store):
+    store.set_state("s1", EXTRACTION_INFLIGHT, 2.0)      # a later run started
+    store.clear_state_if("s1", EXTRACTION_INFLIGHT, 1.0)  # the earlier run finishes
+    assert store.get_state("s1", EXTRACTION_INFLIGHT) == 2.0
+    store.clear_state_if("s1", EXTRACTION_INFLIGHT, 2.0)
+    assert store.get_state("s1", EXTRACTION_INFLIGHT) == 0
+
+
+def test_handoff_mention_is_a_whole_id_in_the_report_text(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
+    _pg_rule(store)
+    store.close()
+    _run("pre_tool_use", {**PG_DENY, "agent_id": "a1"}, cfg)
+    resp = {"agentId": "a1", "prompt": "mind D-0001", "content": [{"type": "text", "text": "Done; see D-00012."}]}
+    out = _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg)
+    assert "D-0001 (1x denied)" in out["hookSpecificOutput"]["additionalContext"]
+    # reported once: a resumed subagent (same agentId) does not repeat old denies
+    assert _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg) is None
+
+
+def test_handoff_survives_a_busy_shared_log(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
+    _pg_rule(store)
+    store.close()
+    _run("pre_tool_use", {**PG_DENY, "agent_id": "a1"}, cfg)
+    s = LedgerStore(cfg)
+    for i in range(700):
+        s.log_intervention({"kind": "gate", "session_id": "other", "decision": "allow"})
+    s.close()
+    resp = {"agentId": "a1", "content": [{"type": "text", "text": "done"}]}
+    assert _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg) is not None
+
+
+def test_glob_and_brace_expansion_refused():
+    user = "<command-name>/ledger</command-name>\n<command-args>add --type constraint --statement 'Never edit *.lock' --user</command-args>"
+    assert authority.check(r"em-hook ledger add --type constraint --statement Never\ edit\ *.lock --user", user)[0] is not None
+    assert authority.check("em-hook ledger add --type constraint --statement 'Never edit *.lock' --user", user)[0] is None
+    assert authority.expands('"use "{pg,mysql}') and authority.expands("~/x") and not authority.expands("'~/{a,b}*'")

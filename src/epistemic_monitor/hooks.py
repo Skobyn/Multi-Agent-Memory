@@ -458,6 +458,16 @@ def post_compact(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
 
 
 # ---------------------------------------------------------------- per turn
+def _run_failed(res: Any) -> bool:
+    """A model error or an exhausted budget; a per-entry validation error ("D-0003: ...") is not a failed run."""
+    return res is None or any(not re.match(r"[DCPKR]-\d+:", str(e)) for e in res.errors)
+
+
+def _requeue(cfg: Config, store: LedgerStore, sid: str, prompts: list[str]) -> None:
+    for p in prompts:
+        store.append_state(sid, PENDING_PROMPTS, p[-12000:], int(cfg.get("extraction", "pending_prompts_max", 8)))
+
+
 def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
@@ -480,18 +490,32 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
                         store.set_state(sid, "last_extraction_ts", time.time())
                         prev = _last_assistant_text(payload.get("transcript_path"))
                         earlier = [str(p) for p in store.pop_state(sid, PENDING_PROMPTS)]
+                        room = int(cfg.get("extraction", "max_chars_per_call", 24000)) - len(prompt[-12000:]) - len(prev[-6000:])
+                        if sum(len(p[-12000:]) for p in earlier) > room:
+                            # they would push the current prompt (the one the gate may be waiting for) past the first
+                            # chunk; leave them for the Stop worker (review, 2026-11-18)
+                            _requeue(cfg, store, sid, earlier)
+                            record["earlier_prompts_deferred"] = len(earlier)
+                            earlier = []
                         # read boundary (2611.19264): the gate waits for this run before denying on a user entry
-                        store.set_state(sid, EXTRACTION_INFLIGHT, time.time())
+                        started = time.time()
+                        store.set_state(sid, EXTRACTION_INFLIGHT, started)
+                        res = None
                         try:
-                            record["extraction"] = ex.run_incremental(prompt, prev, sid, earlier).to_dict()
+                            res = ex.run_incremental(prompt, prev, sid, earlier)
+                            record["extraction"] = res.to_dict()
                         finally:
-                            store.set_state(sid, EXTRACTION_INFLIGHT, 0)
+                            store.clear_state_if(sid, EXTRACTION_INFLIGHT, started)   # a later run's marker stays
+                            if _run_failed(res):
+                                # a failed or cut-short run keeps every prompt it was given, the current one included
+                                _requeue(cfg, store, sid, earlier + ([prompt] if not looks_injected(prompt) else []))
+                                record["requeued"] = True
                         if earlier:
                             record["extraction"]["earlier_prompts"] = len(earlier)
         if "skipped" in (record.get("extraction") or {}) and not looks_injected(prompt):
             # a skipped user prompt used to be read again only at compaction or session end: a rule stated in a quick
             # follow-up went unrecorded, and a revision in it never reached the gate. Keep it for the next run or Stop.
-            store.append_state(sid, PENDING_PROMPTS, prompt[-12000:], int(cfg.get("extraction", "pending_prompts_max", 8)))
+            _requeue(cfg, store, sid, [prompt])
             record["extraction"]["queued"] = True
     store.log_intervention(record)
     return None
@@ -517,6 +541,8 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
             except Exception as e:  # noqa: BLE001 - this check fails closed, unlike the rest of the gate
                 reason, granted = f"Epistemic monitor: the ledger authority check failed ({type(e).__name__}); not running it.", []
             if reason:
+                if payload.get("agent_id") and enforce:
+                    _note_subagent_hit(store, sid, str(payload["agent_id"]), ["user authority"], "deny")
                 store.log_intervention({"kind": "authority_check", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
                                         "agent_id": payload.get("agent_id"), "command": command[:300], "enforce": enforce, "decision": "deny" if enforce else "advisory"})
                 return hooklib.deny("pre_tool_use", reason) if enforce else hooklib.additional_context("pre_tool_use", reason)
@@ -557,6 +583,8 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
             notes.append("Epistemic monitor (first edit review): " + result.advisor["next_step"])
         if notes:
             output = hooklib.additional_context("pre_tool_use", "\n".join(notes))
+    if payload.get("agent_id") and result.decision in ("deny", "advisory") and result.conflicts:
+        _note_subagent_hit(store, sid, str(payload["agent_id"]), result.conflicts, result.decision)
     store.log_intervention({"kind": "gate", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
                             "agent_id": payload.get("agent_id"),
                             "enforce": bool(cfg.get("gate", "enforce", True)),
@@ -570,22 +598,37 @@ def post_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
     return None
 
 
+SUBAGENT_HITS = "subagent_hits:"   # session state, per agent id: the gate's denies/flags on that subagent's calls
+
+
+def _note_subagent_hit(store: LedgerStore, sid: str, agent_id: str, ids: list[str], decision: str) -> None:
+    store.append_state(sid, SUBAGENT_HITS + agent_id, {"ids": list(ids), "decision": decision}, 200)
+
+
 def _subagent_hits(store: LedgerStore, sid: str, agent_id: str, advisories: bool) -> dict[str, dict[str, int]]:
-    """Entry ids the gate denied (and, optionally, flagged) on this subagent's own tool calls."""
+    """Entry ids the gate denied (and, optionally, flagged) on this subagent's calls since its last handoff. Kept in
+    session state, not read back from the shared log, so a long run or parallel sessions cannot push them out."""
     hits: dict[str, dict[str, int]] = {}
-    for r in store.recent_interventions(600):
-        if r.get("session_id") != sid or r.get("agent_id") != agent_id:
+    for r in store.pop_state(sid, SUBAGENT_HITS + agent_id):
+        decision = str((r or {}).get("decision"))
+        if decision not in (("deny", "advisory") if advisories else ("deny",)):
             continue
-        if r.get("kind") == "authority_check" and r.get("decision") == "deny":
-            ids, decision = ["user authority"], "deny"
-        elif r.get("kind") == "gate" and r.get("decision") in (("deny", "advisory") if advisories else ("deny",)):
-            ids, decision = list(r.get("conflicts") or []), str(r["decision"])
-        else:
-            continue
-        for eid in ids:
+        for eid in (r or {}).get("ids") or []:
             hits.setdefault(eid, {}).setdefault(decision, 0)
             hits[eid][decision] += 1
     return hits
+
+
+def _report_text(resp: Any) -> str:
+    """The subagent's own report: the text blocks of ``content`` (not the lead's prompt or other fields)."""
+    if isinstance(resp, dict):
+        content = resp.get("content")
+        if isinstance(content, list):
+            return "\n".join(str(c.get("text") or "") for c in content if isinstance(c, dict))
+        if isinstance(content, str):
+            return content
+        return ""
+    return str(resp or "")
 
 
 def post_tool_use_agent(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
@@ -600,8 +643,8 @@ def post_tool_use_agent(payload: dict[str, Any], cfg: Config, store: LedgerStore
     if not aid:
         return None   # a background launch returns before the subagent has run anything
     hits = _subagent_hits(store, sid, str(aid), bool(cfg.get("gate", "subagent_handoff_advisories", False)))
-    report = json.dumps(resp, ensure_ascii=False) if isinstance(resp, (dict, list)) else str(resp or "")
-    missing = {eid: d for eid, d in hits.items() if eid not in report}
+    report = _report_text(resp)
+    missing = {eid: d for eid, d in hits.items() if not re.search(r"(?<![\w-])" + re.escape(eid) + r"(?![\w-])", report)}
     store.log_intervention({"kind": "subagent_handoff", "session_id": sid, "agent_id": aid,
                             "agent_type": resp.get("agentType"), "hits": hits, "unreported": sorted(missing)})
     if not missing:

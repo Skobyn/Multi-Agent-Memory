@@ -426,7 +426,7 @@ def extract_prompts(argv: list[str]) -> int:
     p.add_argument("--session", required=True)
     p.add_argument("--budget", type=float, default=60.0)
     args = p.parse_args(argv)
-    from .hooks import PENDING_PROMPTS, _extractor_for
+    from .hooks import PENDING_PROMPTS, _extractor_for, _requeue, _run_failed
     from .throttle import slot
     cfg = load_config()
     with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
@@ -445,11 +445,17 @@ def extract_prompts(argv: list[str]) -> int:
                 return 0
             turns = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=t[-12000:], is_injected=looks_injected(t))
                      for t in prompts]
-            res = ex.run(turns, args.session, mode="incremental").to_dict()
+            out = None
+            try:
+                out = ex.run(turns, args.session, mode="incremental")
+            finally:
+                if _run_failed(out):   # a failed or cut-short run puts the prompts back (review, 2026-11-18)
+                    _requeue(cfg, store, args.session, prompts)
+            res = out.to_dict()
             if store.dirty:
                 write_pinned(cfg, store)
             store.log_intervention({"kind": "background_extraction", "source": "pending_prompts", "session_id": args.session,
-                                    "prompts": len(prompts), "extraction": res})
+                                    "prompts": len(prompts), "extraction": res, "requeued": _run_failed(out)})
             print(json.dumps(res))
         finally:
             store.close()

@@ -108,7 +108,8 @@ def normalize(args: str | list[str]) -> tuple[str, ...]:
 
 
 def expands(text: str) -> bool:
-    """Does the shell expand anything here: ``$`` or a backtick outside single quotes (not backslash-escaped)?
+    """Does the shell expand anything here: ``$`` or a backtick outside single quotes, or a glob, brace or tilde
+    character outside any quotes (none of them backslash-escaped)?
     The comparison is on text after quotes are removed, so ``"Budget is $LIMIT"`` matched a user's literal
     ``'Budget is $LIMIT'`` while the shell stored whatever ``LIMIT`` held (review, 2026-11-18)."""
     quote: str | None = None
@@ -122,6 +123,8 @@ def expands(text: str) -> bool:
             i += 2
             continue
         elif c in "$`":
+            return True
+        elif quote is None and c in "*?[{~":   # glob, brace and tilde expansion (review, 2026-11-18)
             return True
         elif c == '"':
             quote = None if quote == '"' else '"'
