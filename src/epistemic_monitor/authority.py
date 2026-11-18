@@ -107,6 +107,30 @@ def normalize(args: str | list[str]) -> tuple[str, ...]:
     return tuple(_ID_RE.sub(_canon_id, t) for t in out)
 
 
+def expands(text: str) -> bool:
+    """Does the shell expand anything here: ``$`` or a backtick outside single quotes (not backslash-escaped)?
+    The comparison is on text after quotes are removed, so ``"Budget is $LIMIT"`` matched a user's literal
+    ``'Budget is $LIMIT'`` while the shell stored whatever ``LIMIT`` held (review, 2026-11-18)."""
+    quote: str | None = None
+    i, n = 0, len(text or "")
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        elif c in "$`":
+            return True
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "'" and quote is None:
+            quote = "'"
+        i += 1
+    return False
+
+
 def needs_check(command: str) -> bool:
     """Cheap pre-test: does this Bash command touch the plugin CLI at all?"""
     return bool(command) and bool(_CLI_RE.search(command))
@@ -171,6 +195,10 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     granted = granted_invocations(last_user_text or "")
     wanted = [inv for inv in invocations(command) if _MARKER_RE.search(" ".join(inv))]
     ok = bool(wanted) and all(inv in granted and inv not in used for inv in wanted)
+    if ok and expands(command):
+        return ("Epistemic monitor: this ledger command acts with the user's authority, and the shell would expand "
+                "`$` or a backtick in it, so what is stored could differ from what the user typed. Run it with the "
+                "arguments in single quotes, exactly as the user wrote them."), []
     if ok:
         return None, wanted
     shown = " ".join(wanted[0]) if wanted else "<subcommand> <id> ..."

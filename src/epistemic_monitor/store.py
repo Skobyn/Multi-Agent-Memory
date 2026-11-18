@@ -379,6 +379,24 @@ class LedgerStore:
             self._conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
                                (session_id, key, json.dumps(value), now_iso()))
 
+    def append_state(self, session_id: str, key: str, item: Any, cap: int) -> None:
+        """Append to a list-valued state key in one write transaction, keeping the newest ``cap`` items."""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute("SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)).fetchone()
+            items = list(json.loads(row[0]) or []) if row else []
+            items = (items + [item])[-max(1, cap):]
+            self._conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
+                               (session_id, key, json.dumps(items), now_iso()))
+
+    def pop_state(self, session_id: str, key: str) -> list[Any]:
+        """Read and clear a list-valued state key in one write transaction (two drains never get the same items)."""
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute("SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)).fetchone()
+            self._conn.execute("DELETE FROM session_state WHERE session_id=? AND key=?", (session_id, key))
+        return list(json.loads(row[0]) or []) if row else []
+
     # ------------------------------------------------------------------ interventions
     def log_intervention(self, record: dict[str, Any]) -> None:
         record = {"ts": now_iso(), **record}

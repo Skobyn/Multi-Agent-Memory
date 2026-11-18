@@ -6,6 +6,7 @@
     em extract-capture <transcript.jsonl[.gz]> --session <id>
     em extract-pending                 (retry captures whose extraction never finished)
     em extract-text <file> --session <id> --role user|assistant
+    em extract-prompts --session <id>   (user prompts a debounced or busy prompt-time run skipped)
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from .hooklib import run
 from .hooks import HANDLERS, write_pinned
 from .schema import ENTRY_TYPES, Entry, Provenance, Scope
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, Turn, read_turns
+from .transcript import KIND_ASSISTANT_TEXT, KIND_USER_TEXT, Turn, looks_injected, read_turns
 
 
 def _coverage_line(cov: dict | None) -> str:
@@ -419,6 +420,42 @@ def extract_text(argv: list[str]) -> int:
     return 0
 
 
+def extract_prompts(argv: list[str]) -> int:
+    """Extract the user prompts that prompt-time extraction skipped (debounced or busy), read from the store."""
+    p = argparse.ArgumentParser(prog="em extract-prompts")
+    p.add_argument("--session", required=True)
+    p.add_argument("--budget", type=float, default=60.0)
+    args = p.parse_args(argv)
+    from .hooks import PENDING_PROMPTS, _extractor_for
+    from .throttle import slot
+    cfg = load_config()
+    with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
+        if not got:
+            print(json.dumps({"skipped": "busy"}))   # the prompts stay queued for the next run
+            return 0
+        store = LedgerStore(cfg)
+        try:
+            ex = _extractor_for(cfg, store, args.budget)
+            if ex is None:
+                print(json.dumps({"skipped": "no extractor"}))
+                return 0
+            prompts = [str(x) for x in store.pop_state(args.session, PENDING_PROMPTS) if str(x).strip()]
+            if not prompts:
+                print(json.dumps({"skipped": "nothing pending"}))
+                return 0
+            turns = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=t[-12000:], is_injected=looks_injected(t))
+                     for t in prompts]
+            res = ex.run(turns, args.session, mode="incremental").to_dict()
+            if store.dirty:
+                write_pinned(cfg, store)
+            store.log_intervention({"kind": "background_extraction", "source": "pending_prompts", "session_id": args.session,
+                                    "prompts": len(prompts), "extraction": res})
+            print(json.dumps(res))
+        finally:
+            store.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
@@ -438,6 +475,8 @@ def main(argv: list[str] | None = None) -> int:
         return extract_pending(rest)
     if cmd == "extract-text":
         return extract_text(rest)
+    if cmd == "extract-prompts":
+        return extract_prompts(rest)
     if cmd == "mcp":
         from .mcp_server import serve
         return serve()

@@ -21,6 +21,7 @@ HOOK_EVENT_NAMES = {
     "user_prompt_submit": "UserPromptSubmit",
     "pre_tool_use": "PreToolUse",
     "post_tool_use": "PostToolUse",
+    "post_tool_use_agent": "PostToolUse",
     "post_tool_batch": "PostToolBatch",
     "stop": "Stop",
     "pre_compact": "PreCompact",

@@ -27,6 +27,8 @@ from typing import Any
 from .bash_classifier import WRITES_SOURCE, Classification, classify
 from .schema import Entry
 
+EXTRACTION_INFLIGHT = "extraction_inflight"  # session state: start time of a running prompt extraction, 0 when idle
+
 MUTATING_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash")
 AUTHORIZATION_TYPES = ("process", "commitment")
 _DESTRUCTIVE = re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\bgit\s+push\s+.*--force|\bDROP\s+(TABLE|DATABASE)\b|\btruncate\b|"
@@ -459,7 +461,7 @@ class GatePipeline:
                  trajectory_slice: str = "", last_advice: str = "") -> GateResult:
         history = history or []
         entries = self.store.active_entries()
-        t_start = time.monotonic()
+        t_start = self._t0 = time.monotonic()
         res = run_tier0(entries, tool, tool_input, str(self.cfg.cwd), history,
                         int(self.g.get("cycle_window", 10)), int(self.g.get("stagnation_run", 7)))
         res.latency_ms["tier0"] = int((time.monotonic() - t_start) * 1000)
@@ -557,8 +559,36 @@ class GatePipeline:
             return []
         return [eid for eid in user_flags if by_id[eid].type != "process"]
 
+    def _settle(self, res: GateResult, by_id: dict[str, Entry], conflicts: set[str], session_id: str) -> set[str]:
+        """Read boundary (arXiv 2611.19264). The entries were read when the call arrived; the user's latest prompt may
+        still be in extraction (UserPromptSubmit is async), and that run may supersede the very entry about to be cited.
+        If a user entry is among the conflicts and such a run is in flight, wait for it (bounded), then drop every
+        conflict whose entry is no longer active. Fail-closed: only a recorded supersession clears a conflict; a timeout,
+        a failed run or an unrelated prompt leaves the deny standing."""
+        wait = float(self.g.get("inflight_wait_s", 8))
+        started = float(self.store.get_state(session_id, EXTRACTION_INFLIGHT, 0) or 0)
+        budget = float(self.cfg.get("extraction", "incremental_time_budget_s", 20)) + 5
+        if wait > 0 and started and time.time() - started < budget \
+                and any(e in by_id and by_id[e].user_authority for e in conflicts):
+            # stay well inside the 25 s PreToolUse timeout, counting the time the tiers already spent
+            deadline = time.monotonic() + max(0.0, min(wait, 20.0 - (time.monotonic() - getattr(self, "_t0", time.monotonic()))))
+            waited = time.monotonic()
+            while time.monotonic() < deadline and float(self.store.get_state(session_id, EXTRACTION_INFLIGHT, 0) or 0) == started:
+                time.sleep(0.2)
+            res.latency_ms["inflight_wait"] = int((time.monotonic() - waited) * 1000)
+        gone = set()
+        for eid in conflicts:
+            cur = self.store.get_entry(eid)
+            if cur is None or cur.status != "active":
+                gone.add(eid)
+        if gone:
+            res.notes.append(f"no longer active when the call was decided: {','.join(sorted(gone))}")
+        return conflicts - gone
+
     def _decide(self, res: GateResult, by_id: dict[str, Entry], conflicts: set[str], session_id: str,
                 history: list[dict[str, Any]]) -> GateResult:
+        if conflicts:
+            conflicts = self._settle(res, by_id, conflicts, session_id)
         res.conflicts = sorted(conflicts)
         if not conflicts:
             res.decision = "allow"

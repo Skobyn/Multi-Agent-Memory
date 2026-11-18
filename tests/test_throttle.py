@@ -55,17 +55,18 @@ def test_prompt_extraction_is_debounced_and_skips_when_busy(cfg, store, monkeypa
     try:
         prompts = [r for r in s2.recent_interventions(50) if r.get("kind") == "prompt"]
         assert prompts[0]["extraction"].get("added") == ["C-0001"]
-        assert prompts[1]["extraction"] == {"skipped": "debounced", "seconds_since_last": prompts[1]["extraction"]["seconds_since_last"]}
+        assert prompts[1]["extraction"] == {"skipped": "debounced", "seconds_since_last": prompts[1]["extraction"]["seconds_since_last"],
+                                            "queued": True}   # kept for the next run (2026-11-18)
         assert len(llm.calls) == 1
     finally:
         s2.close()
-    # with the slots all held elsewhere, extraction is skipped as busy rather than queued
+    # with the slots all held elsewhere, the run is skipped as busy (the prompt is kept for the next run)
     monkeypatch.setenv("EPISTEMIC_EXTRACTION_MIN_INTERVAL_S", "0")
     with throttle.slot("extraction", 2, tmp_path / "locks"), throttle.slot("extraction", 2, tmp_path / "locks"):
         hooklib.run("user_prompt_submit", HANDLERS["user_prompt_submit"], payload={"prompt": "Third rule: ISO dates only.", "session_id": "s1"}, stdout=out)
     s3 = LedgerStore(cfg)
     try:
         last = [r for r in s3.recent_interventions(50) if r.get("kind") == "prompt"][-1]
-        assert last["extraction"] == {"skipped": "busy", "max_concurrent": 2} and len(llm.calls) == 1
+        assert last["extraction"] == {"skipped": "busy", "max_concurrent": 2, "queued": True} and len(llm.calls) == 1
     finally:
         s3.close()
