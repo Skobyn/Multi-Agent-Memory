@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import authority, background, hooklib
+from . import authority, background, hooklib, selfguard
 from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
@@ -344,7 +344,7 @@ def write_pinned(cfg: Config, store: LedgerStore, dropped: set[str] | None = Non
 
 
 # ---------------------------------------------------------------- session lifecycle
-def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
+def _session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     source = str(payload.get("source", "startup"))
     active = store.active_entries()
     pending = [p for p in pending_dir(cfg).glob("*.json")] if source != "compact" else []
@@ -521,7 +521,7 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
     return None
 
 
-def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
+def _pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     tool = str(payload.get("tool_name") or "")
     if tool not in cfg.get("gate", "tools", []):
@@ -745,6 +745,68 @@ def subagent_stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
     store.log_intervention(record)
     return output
 
+
+
+# ---------------------------------------------------------------- the monitor's own files (selfguard.py)
+def _config_notice(cfg: Config, store: LedgerStore, sid: str) -> tuple[str | None, dict[str, Any]]:
+    """(notice for the user, state to commit after the hook's output is built). The user is told once when the
+    config file layers changed since the monitor last ran in this project."""
+    try:
+        changed, state = selfguard.config_change(cfg, store)
+    except Exception:  # noqa: BLE001 - observability only
+        return None, {}
+    if not changed:
+        return None, state
+    store.log_intervention({"kind": "monitor_tamper", "what": "config_changed", "session_id": sid, "keys": changed[:20]})
+    return selfguard.change_notice(changed, cfg), state
+
+
+def _with_notes(event: str, output: dict[str, Any] | None, agent_note: str | None, user_note: str | None) -> dict[str, Any] | None:
+    """Add an agent-facing note (additionalContext, or the deny reason) and a user-facing ``systemMessage``."""
+    if not agent_note and not user_note:
+        return output
+    out = dict(output or {})
+    if agent_note:
+        hso = dict(out.get("hookSpecificOutput") or {"hookEventName": hooklib.HOOK_EVENT_NAMES[event]})
+        field_name = "permissionDecisionReason" if hso.get("permissionDecision") == "deny" else "additionalContext"
+        hso[field_name] = ((str(hso.get(field_name) or "") + "\n\n") if hso.get(field_name) else "") + agent_note
+        hso[field_name] = hso[field_name][:10000]
+        out["hookSpecificOutput"] = hso
+    if user_note:
+        out["systemMessage"] = ((str(out["systemMessage"]) + "\n") if out.get("systemMessage") else "") + user_note
+    return out
+
+
+def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
+    notice, state = _config_notice(cfg, store, _session(payload))
+    out = _with_notes("session_start", _session_start(payload, cfg, store), None, notice)
+    selfguard.commit(store, state)
+    return out
+
+
+def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
+    """The gate, plus two notices that never deny: a call that writes the monitor's own ledger or config, and a
+    config that changed since the last call (checked first, so ``gate.tools = []`` cannot hide its own change)."""
+    sid = _session(payload)
+    notice, state = _config_notice(cfg, store, sid)
+    tool = str(payload.get("tool_name") or "")
+    target = None
+    try:
+        target = selfguard.protected_target(tool, payload.get("tool_input") or {}, cfg)
+    except Exception:  # noqa: BLE001
+        target = None
+    if target:
+        ti = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        store.log_intervention({"kind": "monitor_tamper", "what": "protected_write", "target": target, "tool": tool,
+                                "session_id": sid, "tool_use_id": payload.get("tool_use_id"), "agent_id": payload.get("agent_id"),
+                                "detail": str(ti.get("command") or ti.get("file_path") or ti.get("notebook_path") or "")[:300]})
+    output = _pre_tool_use(payload, cfg, store)
+    user_note = notice
+    if target:
+        user_note = ((notice + "\n") if notice else "") + f"Epistemic monitor: the agent is writing {target} ({tool})."
+    out = _with_notes("pre_tool_use", output, selfguard.advisory_text(target) if target else notice, user_note)
+    selfguard.commit(store, state)   # only now: a gate that raised or was killed leaves the notice to the next call
+    return out
 
 HANDLERS: dict[str, hooklib.Handler] = {
     "session_start": session_start, "session_end": session_end,

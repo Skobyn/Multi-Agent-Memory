@@ -863,3 +863,16 @@ later than 20 s after evaluation began. It never downgrades: only a recorded sup
 report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
 to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
 the shell would expand `$` or a backtick outside single quotes.
+
+## Addendum (2026-11-19): third-party text, the monitor's own files
+
+From `docs/RESEARCH-2026-11-19.md` (2610.28093, 2611.23346, 2611.23844). A prompt that opens with `<wake` (an
+external event, e.g. a GitHub comment) is a harness envelope. Inside a user turn, `<wake>` and
+`<untrusted_external_data>` segments are cut to their last closing tag, or to the end of the text
+(`split_third_party`), before SUPERSEDE lines, ledger grants and entry evidence are read. Evidence that matches only
+such text, or only a non-human user-role turn, is demoted to agent. `<pasted_content>` stays the user's.
+`selfguard.py` never denies. A Write/Edit or writing Bash call that targets the data dir, a config layer, or a
+settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-facing `systemMessage`, and is logged
+as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
+gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
+unverified user quotes.

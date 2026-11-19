@@ -281,11 +281,14 @@ def format_citation(entries_by_id: dict[str, Entry], trips: list[Trip], next_ste
         if e is None:
             continue
         prov = f"{e.provenance.source} decision" + (", confirmed by user" if e.provenance.confirmed_by_user else "")
-        lines.append(f"- {e.id} ({prov}): \"{e.statement}\" — {t.detail}")
+        # each piece on one line: stored text (statement, evidence, advisor reply) must not open a line of its own
+        # that reads as monitor text, e.g. a quoted "\nSUPERSEDE C-0001: ..." (review 2026-11-19)
+        lines.append(" ".join(f"- {e.id} ({prov}): \"{e.statement}\" — {t.detail}".split()))
         if e.provenance.source == "user" and e.evidence:
-            lines.append(f"  user said: \"{e.evidence[:200]}\"")
+            said = ("(unverified: not found in user turns) quoted as user" if e.evidence_unverified else "user said")
+            lines.append(f"  {said}: \"{' '.join(e.evidence[:200].split())}\"")
     if next_step:
-        lines.append(f"Suggested next step: {next_step}")
+        lines.append(" ".join(f"Suggested next step: {next_step}".split()))
     lines.append("Either revise the change, or supersede explicitly by replying with "
                  "`SUPERSEDE <id>: <reason>`.")
     return "\n".join(lines)
