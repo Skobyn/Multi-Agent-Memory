@@ -20,7 +20,8 @@ from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
 from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
 from .store import LedgerStore
-from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, split_own_words
+from .transcript import (KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, split_own_words,
+                         split_third_party)
 
 SYSTEM_PROMPT = """You maintain a decision ledger for a long-running software agent session. Context compaction will later
 destroy the conversation; the ledger is what survives. Extract ONLY durable, explicit items of these types:
@@ -272,7 +273,12 @@ class Extractor:
                 result.errors.append("time budget exhausted before all chunks were processed")
                 break
             active = self.store.active_entries()
-            chunk_user_texts = [t.text for t in chunk if t.is_human]
+            # the user's own text, minus third-party envelopes inside it (an external event mid-prompt); those
+            # segments, and whole user-role turns the harness delivered, are text the user did not write
+            split = [split_third_party(t.text) for t in chunk if t.is_human]
+            chunk_user_texts = [rest for rest, _ in split if rest.strip()]
+            third_party = [seg for _, segs in split for seg in segs] + [
+                t.text for t in chunk if t.kind == KIND_USER_TEXT and not t.is_human and t.text]
             user = (f"MODE: {mode}\n\nEXISTING LEDGER (do not restate; reference by id in depends_on/supersedes):\n"
                     f"{_ledger_block(active)}\n\nCONVERSATION TURNS:\n{format_turns(chunk, self.max_chars)}")
             try:
@@ -285,7 +291,10 @@ class Extractor:
             result.llm_latency_ms += comp.latency_ms
             result.input_tokens += comp.input_tokens
             self._apply(data, active, session_id, bool(chunk_user_texts), result, chunk_user_texts,
-                        forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
+                        # evidence matching only text the user did not write is not the user's (review 2026-11-19:
+                        # a GitHub comment became a user constraint)
+                        forged_label_texts(chunk) + third_party,
+                        [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
