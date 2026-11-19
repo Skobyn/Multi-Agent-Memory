@@ -288,8 +288,11 @@ class Extractor:
                         forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
         return result
 
-    def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str) -> ExtractionResult:
-        turns: list[Turn] = []
+    def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
+                        earlier_prompts: list[str] | None = None) -> ExtractionResult:
+        """``earlier_prompts``: this session's user prompts that an earlier run skipped (debounced or busy)."""
+        turns: list[Turn] = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=p[-12000:], is_injected=looks_injected(p))
+                             for p in earlier_prompts or [] if p.strip()]
         if prev_assistant_text.strip():
             turns.append(Turn(uuid="", kind=KIND_ASSISTANT_TEXT, role="assistant", text=prev_assistant_text[-6000:]))
         turns.append(Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=prompt_text[-12000:],

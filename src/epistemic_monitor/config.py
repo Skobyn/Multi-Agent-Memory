@@ -40,6 +40,10 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "gate": {
         "enforce": True,                      # Phase 2: deny user-backed conflicts (budgeted)
+        "inflight_wait_s": 8,                 # before denying on a user entry, wait this long for an in-flight
+                                              # extraction of the user's latest prompt (it may revise the entry)
+        "subagent_handoff": True,             # tell the lead which entries a subagent's calls were denied on
+        "subagent_handoff_advisories": False, # ... and the advisory flags too
         "enforce_uncalibrated_min_p": 0.9,    # without calibration, model-only conflicts deny only at p >= this
         "tau_default": 0.75,
         "tau_by_type": {"process": 0.6, "commitment": 0.6},
@@ -80,6 +84,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "background_on_session_end": True, "on_stop": True, "stop_min_chars": 200,
         "max_concurrent": 2,        # machine-wide cap on extractions that call a model at the same time
         "min_interval_s": 20,       # per-session debounce for prompt-time extraction
+        "pending_prompts_max": 8,   # user prompts a debounced/busy run skipped, kept for the next run or Stop
     },
     "logging": {"shadow_mode": True, "level": "info"},
 }

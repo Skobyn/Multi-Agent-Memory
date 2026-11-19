@@ -848,3 +848,18 @@ out unscored. After a Tier 3 "consistent" verdict, a flagged user-authority entr
 the command matches `_DESTRUCTIVE` (process entries excepted), or the advisor's verdict did not parse. Either way
 the entry must meet the no-advisor bar (p ≥ `enforce_uncalibrated_min_p`, or flagged when calibrated). Agent entries and trajectory text cannot authorize breaking a user rule;
 only a user supersession can.
+
+## Addendum (2026-11-18): read boundary, kept prompts, subagent handoff
+
+From `docs/RESEARCH-2026-11-18.md` (2611.19264, 2611.22245). A prompt-time extraction skipped as debounced or busy
+keeps its prompt in session state `pending_prompts` (newest `extraction.pending_prompts_max`, 8, harness envelopes
+excluded). The next prompt-time run reads those prompts as user turns. Stop also runs `em-hook extract-prompts`,
+which pops them from the store. A running prompt extraction marks `extraction_inflight`. Before denying, the gate
+re-checks the status of every conflict and drops those no longer active. When a user-authority entry is among the
+conflicts and a fresh run is in flight, the gate first waits for it, up to `gate.inflight_wait_s` (8 s) and no
+later than 20 s after evaluation began. It never downgrades: only a recorded supersession clears a conflict.
+`gate` and `authority_check` records carry the subagent's `agent_id`. A synchronous PostToolUse hook on
+`Agent|Task` (`post_tool_use_agent`) tells the lead which entries the gate denied on that subagent's calls and its
+report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
+to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
+the shell would expand `$` or a backtick outside single quotes.
