@@ -32,9 +32,10 @@ _READ_ONLY_LEAD = re.compile(r"^\s*(?:cat|less|more|head|tail|grep|rg|ls|wc|stat
 _WRITE_HINT = re.compile(r">|\b(?:tee|sed|perl|rm|mv|cp|rsync|install|ln|touch|truncate|dd|sqlite3|python3?|node|"
                          r"ruby|echo|printf|chmod|unlink)\b")
 _CONTROL = re.compile(r"[;&|`\n]|\$\(")
-_EPISTEMIC_PATH = re.compile(r"epistemic\.json|/epistemic(?:/|\b|$)")
-_SETTINGS_PATH = re.compile(r"\.claude/settings(?:\.local)?\.json|\bsettings(?:\.local)?\.json\b")
-_SETTINGS_RISK = re.compile(r"disableAllHooks|\"hooks\"|EPISTEMIC_|epistemic")
+# the data dir is ``.../epistemic``: a path segment, not a prefix of ``epistemic-monitor`` (this plugin's checkout)
+_EPISTEMIC_PATH = re.compile(r"epistemic\.json|/epistemic(?=/|$|[\s\"';&|)])")
+_SETTINGS_PATH = re.compile(r"\.claude/settings(?:\.local)?\.json")
+_SETTINGS_RISK = re.compile(r"disableAllHooks|\"hooks\"|enabledPlugins|EPISTEMIC_|epistemic")
 
 
 def _real(p: Path) -> str:
@@ -61,8 +62,8 @@ def protected_target(tool: str, tool_input: dict[str, Any], cfg: Config) -> str 
     ti = tool_input if isinstance(tool_input, dict) else {}
     if tool == "Bash":
         cmd = str(ti.get("command") or "")
-        if not cmd.strip() or authority.needs_check(cmd):
-            return None   # ledger CLI with user authority: authority.py decides
+        if not cmd.strip() or authority.only_ledger(cmd):
+            return None   # nothing but ledger CLI calls: they write the ledger in-process, and authority.py checks them
         if _READ_ONLY_LEAD.match(cmd) and not _CONTROL.search(cmd) and ">" not in cmd:
             return None
         if not _WRITE_HINT.search(cmd):
@@ -70,8 +71,8 @@ def protected_target(tool: str, tool_input: dict[str, Any], cfg: Config) -> str 
         data = _real(cfg.data_dir)
         if _EPISTEMIC_PATH.search(cmd) or data in cmd or str(cfg.data_dir) in cmd:
             return "the monitor's ledger or config"
-        if _SETTINGS_PATH.search(cmd) and _SETTINGS_RISK.search(cmd):
-            return "Claude Code settings (hooks or EPISTEMIC_* env)"
+        if _SETTINGS_PATH.search(cmd):   # any write, copy over or removal can drop the hooks or the plugin
+            return "Claude Code settings (hooks, plugins or EPISTEMIC_* env)"
         return None
     raw = str(ti.get("file_path") or ti.get("notebook_path") or "")
     if not raw:
@@ -85,9 +86,14 @@ def protected_target(tool: str, tool_input: dict[str, Any], cfg: Config) -> str 
     if real in configs:
         return configs[real]
     if real in _settings_files(cfg):
-        text = json.dumps(ti)
-        if _SETTINGS_RISK.search(text):
-            return "Claude Code settings (hooks or EPISTEMIC_* env)"
+        # risky when the new text or the file as it stands touches hooks, plugins or EPISTEMIC_* (a Write that drops
+        # the hooks block has none of them in its new content)
+        try:
+            current = Path(real).read_text(encoding="utf-8", errors="replace")[:200000]
+        except OSError:
+            current = ""
+        if _SETTINGS_RISK.search(json.dumps(ti)) or _SETTINGS_RISK.search(current):
+            return "Claude Code settings (hooks, plugins or EPISTEMIC_* env)"
     return None
 
 
@@ -106,22 +112,29 @@ def _flatten(d: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def config_change(cfg: Config, store) -> list[str] | None:
-    """Dotted keys whose merged value changed since the last check in this project (``a.b (old -> new)``), or None
-    when nothing changed or there is no earlier fingerprint. Records the current fingerprint either way."""
-    flat = {k: v for k, v in _flatten(cfg.values).items()}
+def config_change(cfg: Config, store) -> tuple[list[str] | None, dict[str, Any]]:
+    """``(changed, state)``: dotted keys of the merged file-layer config whose value changed since the last recorded
+    fingerprint in this project (``a.b (old -> new)``), or None when nothing changed or there is none yet; and the
+    state to record with ``commit`` once the notice has been delivered (so a hook that fails or is killed before its
+    output reports it again next time)."""
+    flat = _flatten(cfg.file_values or cfg.values)
     blob = json.dumps(flat, sort_keys=True, default=str)
     fp = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
     prev = store.get_state(PROJECT_STATE, FP_KEY) or {}
+    state = {"fp": fp, "values": flat}
     if prev.get("fp") == fp:
-        return None
-    store.set_state(PROJECT_STATE, FP_KEY, {"fp": fp, "values": flat})
+        return None, {}
     if not prev:
-        return None
+        return None, state
     old = prev.get("values") or {}
     keys = sorted(set(old) | set(flat))
     return [f"{k} ({json.dumps(old.get(k), default=str)} -> {json.dumps(flat.get(k), default=str)})"
-            for k in keys if old.get(k) != flat.get(k)]
+            for k in keys if old.get(k) != flat.get(k)], state
+
+
+def commit(store, state: dict[str, Any]) -> None:
+    if state:
+        store.set_state(PROJECT_STATE, FP_KEY, state)
 
 
 def change_notice(changed: list[str], cfg: Config) -> str:

@@ -96,3 +96,52 @@ def test_deny_keeps_its_decision_with_notes():
     assert d["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert d["hookSpecificOutput"]["permissionDecisionReason"].startswith("denied: C-0001")
     assert d["systemMessage"] == "user note"
+
+
+# ---- review of the finished diff (2026-11-19)
+def test_settings_removal_and_hook_dropping_write_flag(cfg):
+    for cmd in ("rm .claude/settings.json", "cp /tmp/x.json .claude/settings.json",
+                "jq 'del(.enabledPlugins)' .claude/settings.json > t && mv t .claude/settings.json"):
+        assert _hit(cfg, "Bash", command=cmd), cmd
+    p = cfg.cwd / ".claude" / "settings.json"
+    p.parent.mkdir(exist_ok=True)
+    p.write_text('{"hooks": {"PreToolUse": []}}')
+    assert _hit(cfg, "Write", file_path=str(p), content='{"permissions": {}}')
+
+
+def test_ledger_cli_token_does_not_hide_a_write(cfg):
+    d = cfg.data_dir
+    assert _hit(cfg, "Bash", command=f"rm {d}/index.db  # em-hook")
+    assert _hit(cfg, "Bash", command=f"sqlite3 {d}/index.db 'delete from entries'; em-hook ledger status")
+
+
+def test_plugin_checkout_is_not_the_data_dir(cfg):
+    assert not _hit(cfg, "Bash", command="cd ~/src/epistemic-monitor && python -m pytest > out.txt")
+
+
+def test_env_overrides_do_not_ping_pong(cfg, monkeypatch, store):
+    _offline(monkeypatch)
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    for i in range(4):
+        if i % 2:
+            monkeypatch.setenv("EPISTEMIC_GATE_DENY_BUDGET", "2")
+        else:
+            monkeypatch.delenv("EPISTEMIC_GATE_DENY_BUDGET", raising=False)
+        assert not (_run("pre_tool_use", call, cfg) or {}).get("systemMessage")
+
+
+def test_notice_survives_a_failed_gate(cfg, monkeypatch):
+    from epistemic_monitor import hooks
+    _offline(monkeypatch)
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    _run("pre_tool_use", call, cfg)
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.data_dir / "config.json").write_text(json.dumps({"gate": {"enforce": False}}))
+    real = hooks._pre_tool_use
+
+    def boom(*a, **k):
+        raise RuntimeError("gate failed")
+    monkeypatch.setattr(hooks, "_pre_tool_use", boom)
+    assert not (_run("pre_tool_use", call, cfg) or {}).get("systemMessage")
+    monkeypatch.setattr(hooks, "_pre_tool_use", real)
+    assert "gate.enforce" in _run("pre_tool_use", call, cfg)["systemMessage"]

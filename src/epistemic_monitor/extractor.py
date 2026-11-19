@@ -277,6 +277,9 @@ class Extractor:
             # segments, and whole user-role turns the harness delivered, are text the user did not write
             split = [split_third_party(t.text) for t in chunk if t.is_human]
             chunk_user_texts = [rest for rest, _ in split if rest.strip()]
+            # external-event text proper (not every harness turn): short evidence near it cannot be judged safe
+            external = [seg for _, segs in split for seg in segs] + [
+                t.text for t in chunk if t.kind == KIND_USER_TEXT and not t.is_human and split_third_party(t.text)[1]]
             third_party = [seg for _, segs in split for seg in segs] + [
                 t.text for t in chunk if t.kind == KIND_USER_TEXT and not t.is_human and t.text]
             user = (f"MODE: {mode}\n\nEXISTING LEDGER (do not restate; reference by id in depends_on/supersedes):\n"
@@ -294,7 +297,7 @@ class Extractor:
                         # evidence matching only text the user did not write is not the user's (review 2026-11-19:
                         # a GitHub comment became a user constraint)
                         forged_label_texts(chunk) + third_party,
-                        [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
+                        [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text], external)
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
@@ -311,7 +314,10 @@ class Extractor:
     # ------------------------------------------------------------------ private
     def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
                user_texts: list[str] | None = None, forged_texts: list[str] | None = None,
-               assistant_texts: list[str] | None = None) -> None:
+               assistant_texts: list[str] | None = None, third_party: list[str] | None = None) -> None:
+        """``third_party``: text in this chunk the user did not write (external events, harness-delivered turns).
+        When there is any, a claimed user quote too short to judge is not enough for user authority."""
+        third_party = [t for t in third_party or [] if t.strip()]
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -371,6 +377,10 @@ class Extractor:
                 if evidence_check is False and forged_texts and evidence_supported(str(c.get("evidence", "")), forged_texts):
                     # The quote has no counterpart in what the user typed and does match text placed behind a fake
                     # "[user ...]:" label in a turn the user did not write. That is a forged turn, not a paraphrase.
+                    source, forged = "agent", True
+                    result.forged_user_source += 1
+                elif evidence_check is None and third_party:
+                    # too short to tell whose words these are, in a chunk that carries third-party text
                     source, forged = "agent", True
                     result.forged_user_source += 1
                 elif evidence_check is False:
@@ -439,7 +449,7 @@ class Extractor:
             if by == "user" and user_texts:
                 parts = [split_own_words(t) for t in user_texts]
                 own = [o for o, _ in parts]
-                quoted = [q for _, q in parts if q.strip()]
+                quoted = [q for _, q in parts if q.strip()] + third_party
                 ev = str(s.get("evidence", ""))
                 own_score = evidence_overlap(ev, own)
                 demote = own_score is not None and own_score < EVIDENCE_THRESHOLD

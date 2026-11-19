@@ -748,16 +748,17 @@ def subagent_stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
 
 
 # ---------------------------------------------------------------- the monitor's own files (selfguard.py)
-def _config_notice(cfg: Config, store: LedgerStore, sid: str) -> str | None:
-    """Tell the user once when the merged config changed since the monitor last ran in this project."""
+def _config_notice(cfg: Config, store: LedgerStore, sid: str) -> tuple[str | None, dict[str, Any]]:
+    """(notice for the user, state to commit after the hook's output is built). The user is told once when the
+    config file layers changed since the monitor last ran in this project."""
     try:
-        changed = selfguard.config_change(cfg, store)
+        changed, state = selfguard.config_change(cfg, store)
     except Exception:  # noqa: BLE001 - observability only
-        return None
+        return None, {}
     if not changed:
-        return None
+        return None, state
     store.log_intervention({"kind": "monitor_tamper", "what": "config_changed", "session_id": sid, "keys": changed[:20]})
-    return selfguard.change_notice(changed, cfg)
+    return selfguard.change_notice(changed, cfg), state
 
 
 def _with_notes(event: str, output: dict[str, Any] | None, agent_note: str | None, user_note: str | None) -> dict[str, Any] | None:
@@ -777,15 +778,17 @@ def _with_notes(event: str, output: dict[str, Any] | None, agent_note: str | Non
 
 
 def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
-    output = _session_start(payload, cfg, store)
-    return _with_notes("session_start", output, None, _config_notice(cfg, store, _session(payload)))
+    notice, state = _config_notice(cfg, store, _session(payload))
+    out = _with_notes("session_start", _session_start(payload, cfg, store), None, notice)
+    selfguard.commit(store, state)
+    return out
 
 
 def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     """The gate, plus two notices that never deny: a call that writes the monitor's own ledger or config, and a
     config that changed since the last call (checked first, so ``gate.tools = []`` cannot hide its own change)."""
     sid = _session(payload)
-    notice = _config_notice(cfg, store, sid)
+    notice, state = _config_notice(cfg, store, sid)
     tool = str(payload.get("tool_name") or "")
     target = None
     try:
@@ -801,7 +804,9 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     user_note = notice
     if target:
         user_note = ((notice + "\n") if notice else "") + f"Epistemic monitor: the agent is writing {target} ({tool})."
-    return _with_notes("pre_tool_use", output, selfguard.advisory_text(target) if target else notice, user_note)
+    out = _with_notes("pre_tool_use", output, selfguard.advisory_text(target) if target else notice, user_note)
+    selfguard.commit(store, state)   # only now: a gate that raised or was killed leaves the notice to the next call
+    return out
 
 HANDLERS: dict[str, hooklib.Handler] = {
     "session_start": session_start, "session_end": session_end,

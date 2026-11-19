@@ -15,7 +15,7 @@ import copy
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +171,9 @@ class Config:
     values: dict[str, dict[str, Any]]
     cwd: Path
     data_dir: Path
+    # the merged file layers without environment overrides: what selfguard fingerprints, so parallel sessions with
+    # different EPISTEMIC_* env do not report a change to each other on every call (review 2026-11-19)
+    file_values: dict[str, Any] = field(default_factory=dict)
 
     # ---- paths (DESIGN.md §2) ----
     @property
@@ -231,5 +234,6 @@ def load_config(cwd: str | os.PathLike[str] | None = None,
     values = _deep_merge(values, _load_json_file(_claude_config_dir(env) / "epistemic.json"))
     values = _deep_merge(values, _load_json_file(cwd_path / ".claude" / "epistemic.json"))
     values = _deep_merge(values, _load_json_file(data_dir / "config.json"))
+    file_values = copy.deepcopy(values)
     values = _deep_merge(values, _env_overrides(env))
-    return Config(values=values, cwd=cwd_path, data_dir=data_dir)
+    return Config(values=values, cwd=cwd_path, data_dir=data_dir, file_values=file_values)
