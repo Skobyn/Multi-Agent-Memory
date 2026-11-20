@@ -69,8 +69,13 @@ class ReadStats:
     versions: set[str] = field(default_factory=set)
 
 
+# ``<wake ...>`` carries an external event (a GitHub PR comment, CI output) into a cloud session as a user-role turn.
+# Anyone who can comment on the PR writes its body, so it is never the user's own words (arXiv 2611.21259: trust
+# boundaries break at delegation and event relays). ``<untrusted_external_data>`` is the harness's label for the same
+# kind of text inside such an event.
 _INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-message", "Another Claude session sent a message",
-                      "<local-command-stdout>", "<local-command-stderr>")
+                      "<local-command-stdout>", "<local-command-stderr>", "<wake>", "<wake ", "<wake\n",
+                      "<untrusted_external_data")
 
 
 _INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
@@ -82,8 +87,10 @@ def looks_injected(text: str) -> bool:
     return (text or "").translate(_INVISIBLE).lstrip().startswith(_INJECTED_PREFIXES)
 
 
-_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr")
-_ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
+_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr",
+                  "wake", "untrusted_external_data")
+# the tag name must end at whitespace, ``/`` or ``>``: ``<wakeup>`` and ``<wake-up>`` are not envelopes
+_ENVELOPE_RE = re.compile(r"<(%s)(?=[\s/>])[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
 # a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at
 # least as long (CommonMark); an unclosed fence runs to the end
 _FENCE_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*(?:\n.*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)|\Z)", re.DOTALL | re.MULTILINE)

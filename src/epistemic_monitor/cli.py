@@ -426,7 +426,7 @@ def extract_prompts(argv: list[str]) -> int:
     p.add_argument("--session", required=True)
     p.add_argument("--budget", type=float, default=60.0)
     args = p.parse_args(argv)
-    from .hooks import PENDING_PROMPTS, _extractor_for, _requeue, _run_failed
+    from .hooks import PENDING_PROMPTS, _extractor_for, _newest, _queued, _requeue, _run_failed
     from .throttle import slot
     cfg = load_config()
     with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
@@ -439,15 +439,17 @@ def extract_prompts(argv: list[str]) -> int:
             if ex is None:
                 print(json.dumps({"skipped": "no extractor"}))
                 return 0
-            prompts = [str(x) for x in store.pop_state(args.session, PENDING_PROMPTS) if str(x).strip()]
+            prompts = _queued(store.pop_state(args.session, PENDING_PROMPTS))   # oldest first
             if not prompts:
                 print(json.dumps({"skipped": "nothing pending"}))
                 return 0
             turns = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=t[-12000:], is_injected=looks_injected(t))
-                     for t in prompts]
+                     for t, _ in prompts]
             out = None
             try:
-                out = ex.run(turns, args.session, mode="incremental")
+                # dated by the newest prompt it reads: a rule or supersession dated after that came from a later
+                # prompt, and an older prompt read now must not undo it
+                out = ex.run(turns, args.session, mode="incremental", as_of=_newest(prompts))
             finally:
                 if _run_failed(out):   # a failed or cut-short run puts the prompts back (review, 2026-11-18)
                     _requeue(cfg, store, args.session, prompts)

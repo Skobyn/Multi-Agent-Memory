@@ -14,6 +14,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from .anchors import extract_anchors
@@ -86,6 +87,25 @@ class ExtractionResult:
         return {"added": [e.id for e in self.added], "superseded": self.superseded,
                 "skipped_duplicates": self.skipped_duplicates, "resurrection_blocked": self.resurrection_blocked, "rejected": self.rejected, "forged_user_source": self.forged_user_source, "calls": self.calls,
                 "llm_latency_ms": self.llm_latency_ms, "input_tokens": self.input_tokens, "errors": self.errors[:5]}
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _later_than(stamp: str | None, as_of: float | None) -> bool:
+    """Is the ISO ``stamp`` strictly after ``as_of`` (epoch)? Compared as instants, never as strings (``...05Z`` sorts
+    after ``...05.123Z``). Unknown either side: False (nothing is refused for a date it cannot read). Stamps have
+    whole-second resolution, so a stamp in the same second as ``as_of`` is not later."""
+    if not stamp or as_of is None:
+        return False
+    try:
+        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.timestamp() >= int(as_of) + 1
 
 
 BODY_INDENT = "  | "
@@ -261,7 +281,13 @@ class Extractor:
         self.time_budget_s, self.min_confidence = time_budget_s, min_confidence
 
     # ------------------------------------------------------------------ public
-    def run(self, turns: list[Turn], session_id: str, mode: str = "full") -> ExtractionResult:
+    def run(self, turns: list[Turn], session_id: str, mode: str = "full", as_of: float | None = None,
+            said_at: float | None = None) -> ExtractionResult:
+        """Dates (epoch), both optional. ``as_of``: for turns read after they were said (queued prompts drained
+        later), when the newest of them was typed. New entries and supersessions are dated then, and an entry or
+        revocation dated after it came from a later turn, so this run cannot undo it (arXiv 2611.02361: order-blind
+        updates keep whichever version was read last). ``said_at``: for the user's current prompt, when it was typed;
+        it only dates what the run writes and refuses nothing, since nothing typed is newer. Neither: dated now."""
         result = ExtractionResult()
         turns = [t for t in turns if t.kind in (KIND_USER_TEXT, KIND_ASSISTANT_TEXT, KIND_TOOL_USE)]
         if not any(t.kind in (KIND_USER_TEXT, KIND_ASSISTANT_TEXT) and t.text.strip() for t in turns):
@@ -285,11 +311,12 @@ class Extractor:
             result.llm_latency_ms += comp.latency_ms
             result.input_tokens += comp.input_tokens
             self._apply(data, active, session_id, bool(chunk_user_texts), result, chunk_user_texts,
-                        forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
+                        forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text],
+                        as_of=as_of, said_at=said_at)
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
-                        earlier_prompts: list[str] | None = None) -> ExtractionResult:
+                        earlier_prompts: list[str] | None = None, said_at: float | None = None) -> ExtractionResult:
         """``earlier_prompts``: this session's user prompts that an earlier run skipped (debounced or busy)."""
         turns: list[Turn] = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=p[-12000:], is_injected=looks_injected(p))
                              for p in earlier_prompts or [] if p.strip()]
@@ -297,12 +324,15 @@ class Extractor:
             turns.append(Turn(uuid="", kind=KIND_ASSISTANT_TEXT, role="assistant", text=prev_assistant_text[-6000:]))
         turns.append(Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=prompt_text[-12000:],
                           is_injected=looks_injected(prompt_text)))
-        return self.run(turns, session_id, mode="incremental")
+        return self.run(turns, session_id, mode="incremental", said_at=said_at)
 
     # ------------------------------------------------------------------ private
     def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
                user_texts: list[str] | None = None, forged_texts: list[str] | None = None,
-               assistant_texts: list[str] | None = None) -> None:
+               assistant_texts: list[str] | None = None, as_of: float | None = None,
+               said_at: float | None = None) -> None:
+        dated = as_of if as_of is not None else said_at
+        stamp = _iso(dated) if dated is not None else None
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -349,10 +379,13 @@ class Extractor:
             # come back with a new id when a compaction summary keeps it and the agent restates it
             # (transparent-compact, 2610.20116). Only the user may re-make it, in words found in a user turn.
             tomb = self._revoked_match(statement)
-            if tomb is not None and (source != "user" or (
+            # a user restatement revives a revoked entry only if it was said after the revocation: a queued prompt
+            # read after its own revision is the old rule, not a reinstatement
+            stale = tomb is not None and _later_than(tomb.valid_to, as_of)
+            if tomb is not None and (stale or source != "user" or (
                     user_texts and evidence_supported(str(c.get("evidence", "")), user_texts) is False)):
                 self.store.log_intervention({"kind": "resurrection_blocked", "entry": tomb.id, "statement": statement[:120],
-                                             "claimed_source": source, "session_id": session_id})
+                                             "claimed_source": source, "session_id": session_id, "stale": stale})
                 result.resurrection_blocked += 1
                 continue
             evidence_check: bool | None = None
@@ -397,6 +430,8 @@ class Extractor:
                                       timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
                 depends_on=depends, evidence=evidence, evidence_unverified=unverified,
             )
+            if stamp:
+                entry.valid_from = stamp
             if etype == "premise" and source != "user" and self.store.config.get("drift", "enabled", False):
                 from .drift import fingerprint
                 entry.scope_fingerprint = fingerprint(self.store.config.cwd, scope.paths)
@@ -443,7 +478,17 @@ class Extractor:
                 by = "agent"  # claimed user words that match nothing the user wrote as their own: no user authority
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
-            ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id)
+            target = self.store.get_entry(s["old"].strip().upper())
+            if target is not None and _later_than(target.valid_from, as_of):
+                # the entry was made after the turn this supersession comes from (an older queued prompt read after a
+                # newer one): applying it would put the older rule back over the newer one
+                self.store.log_intervention({"kind": "stale_supersede_refused", "old": target.id, "by": by,
+                                             "entry_valid_from": target.valid_from, "as_of": stamp,
+                                             "session_id": session_id})
+                result.superseded.append({"old": s["old"], "by": by, "ok": False, "stale": True})
+                continue
+            ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id,
+                                      valid_to=stamp)
             result.superseded.append({"old": s["old"], "by": by, "ok": ok})
 
     def _embed(self, text: str) -> list[float] | None:

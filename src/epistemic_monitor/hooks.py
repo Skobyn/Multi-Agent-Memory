@@ -463,14 +463,42 @@ def _run_failed(res: Any) -> bool:
     return res is None or any(not re.match(r"[DCPKR]-\d+:", str(e)) for e in res.errors)
 
 
-def _requeue(cfg: Config, store: LedgerStore, sid: str, prompts: list[str]) -> None:
-    for p in prompts:
-        store.append_state(sid, PENDING_PROMPTS, p[-12000:], int(cfg.get("extraction", "pending_prompts_max", 8)))
+QueuedPrompt = tuple[str, "float | None"]
+
+
+def _queued(items: list[Any]) -> list[QueuedPrompt]:
+    """Queue items as ``(text, submit time)``, oldest first. An item is ``{"p": text, "t": epoch}``; a bare string
+    (written before items carried a time) has no time and sorts first. The order matters: a ledger built from prompts
+    read out of order keeps whichever rule was read last, not the one said last (arXiv 2611.02361)."""
+    out: list[QueuedPrompt] = []
+    for x in items:
+        text, t = (x.get("p", ""), x.get("t")) if isinstance(x, dict) else (x, None)
+        try:
+            t = float(t) if t is not None else None
+        except (TypeError, ValueError):
+            t = None
+        if str(text).strip():
+            out.append((str(text), t))
+    return sorted(out, key=lambda it: it[1] or 0.0)
+
+
+def _newest(prompts: list[QueuedPrompt]) -> float | None:
+    """When the newest of these prompts was typed: the ``as_of`` of a run that reads them."""
+    times = [t for _, t in prompts if t is not None]
+    return max(times) if times else None
+
+
+def _requeue(cfg: Config, store: LedgerStore, sid: str, prompts: list[QueuedPrompt]) -> None:
+    """Put prompts back with the time they were typed, so a requeued prompt never moves ahead of a newer one."""
+    for p, t in prompts:
+        store.append_state(sid, PENDING_PROMPTS, {"p": p[-12000:], "t": t}, int(cfg.get("extraction", "pending_prompts_max", 8)),
+                           order_by="t")
 
 
 def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
+    submitted = time.time()   # when the user typed it: every entry and supersession from this prompt is dated here
     # a harness envelope delivered as a prompt (a background task's result, another agent's message) is not the user
     applied = _apply_supersede_lines(prompt, "agent" if looks_injected(prompt) else "user", store, sid)
     record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
@@ -489,9 +517,9 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
                     if ex is not None:
                         store.set_state(sid, "last_extraction_ts", time.time())
                         prev = _last_assistant_text(payload.get("transcript_path"))
-                        earlier = [str(p) for p in store.pop_state(sid, PENDING_PROMPTS)]
+                        earlier = _queued(store.pop_state(sid, PENDING_PROMPTS))
                         room = int(cfg.get("extraction", "max_chars_per_call", 24000)) - len(prompt[-12000:]) - len(prev[-6000:])
-                        if sum(len(p[-12000:]) for p in earlier) > room:
+                        if sum(len(p[-12000:]) for p, _ in earlier) > room:
                             # they would push the current prompt (the one the gate may be waiting for) past the first
                             # chunk; leave them for the Stop worker (review, 2026-11-18)
                             _requeue(cfg, store, sid, earlier)
@@ -502,20 +530,20 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
                         store.set_state(sid, EXTRACTION_INFLIGHT, started)
                         res = None
                         try:
-                            res = ex.run_incremental(prompt, prev, sid, earlier)
+                            res = ex.run_incremental(prompt, prev, sid, [p for p, _ in earlier], said_at=submitted)
                             record["extraction"] = res.to_dict()
                         finally:
                             store.clear_state_if(sid, EXTRACTION_INFLIGHT, started)   # a later run's marker stays
                             if _run_failed(res):
                                 # a failed or cut-short run keeps every prompt it was given, the current one included
-                                _requeue(cfg, store, sid, earlier + ([prompt] if not looks_injected(prompt) else []))
+                                _requeue(cfg, store, sid, earlier + ([(prompt, submitted)] if not looks_injected(prompt) else []))
                                 record["requeued"] = True
                         if earlier:
                             record["extraction"]["earlier_prompts"] = len(earlier)
         if "skipped" in (record.get("extraction") or {}) and not looks_injected(prompt):
             # a skipped user prompt used to be read again only at compaction or session end: a rule stated in a quick
             # follow-up went unrecorded, and a revision in it never reached the gate. Keep it for the next run or Stop.
-            _requeue(cfg, store, sid, [prompt])
+            _requeue(cfg, store, sid, [(prompt, submitted)])
             record["extraction"]["queued"] = True
     store.log_intervention(record)
     return None

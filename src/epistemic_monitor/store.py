@@ -125,7 +125,7 @@ class LedgerStore:
             old, new = self.get_entry(ev["old"]), self.get_entry(ev["new"]) if ev.get("new") else None
             if old is not None:
                 d = old.to_dict()
-                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("ts") or now_iso(),
+                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("valid_to") or ev.get("ts") or now_iso(),
                          revoked_by=ev.get("by"))
                 self._upsert(Entry.from_dict(d))
             if new is not None and ev["old"] not in new.supersedes:
@@ -249,9 +249,11 @@ class LedgerStore:
                 groups.append(group)
         return groups
 
-    def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "") -> bool:
+    def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "",
+                  valid_to: str | None = None) -> bool:
         """Apply the authority rule (DESIGN §3): a user-provenance entry can only be
-        superseded with ``by="user"``. Returns False when refused."""
+        superseded with ``by="user"``. Returns False when refused. ``valid_to``: when the revision was said, if not
+        now (a queued prompt read later)."""
         old = self.get_entry(old_id)
         if old is None:
             return False
@@ -259,8 +261,10 @@ class LedgerStore:
             self.log_intervention({"kind": "supersede_refused", "entry": old_id, "by": by,
                                    "reason": reason, "session_id": session_id})
             return False
-        self._apply_event({"event": "supersede", "old": old_id, "new": new_id, "reason": reason,
-                           "by": by, "session_id": session_id})
+        ev = {"event": "supersede", "old": old_id, "new": new_id, "reason": reason, "by": by, "session_id": session_id}
+        if valid_to:
+            ev["valid_to"] = valid_to
+        self._apply_event(ev)
         return True
 
     def set_embedding(self, entry_id: str, embedding: list[float]) -> None:
@@ -379,13 +383,23 @@ class LedgerStore:
             self._conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
                                (session_id, key, json.dumps(value), now_iso()))
 
-    def append_state(self, session_id: str, key: str, item: Any, cap: int) -> None:
-        """Append to a list-valued state key in one write transaction, keeping the newest ``cap`` items."""
+    def append_state(self, session_id: str, key: str, item: Any, cap: int, order_by: str | None = None) -> None:
+        """Append to a list-valued state key in one write transaction, keeping the newest ``cap`` items. With
+        ``order_by``, dict items are kept sorted by that field (missing or non-dict sorts first), so the cap drops the
+        oldest by that field rather than by position."""
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = self._conn.execute("SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)).fetchone()
             items = list(json.loads(row[0]) or []) if row else []
-            items = (items + [item])[-max(1, cap):]
+            items = items + [item]
+            if order_by:
+                def _key(x: Any) -> float:
+                    try:
+                        return float(x.get(order_by) or 0.0) if isinstance(x, dict) else 0.0
+                    except (TypeError, ValueError):
+                        return 0.0
+                items.sort(key=_key)
+            items = items[-max(1, cap):]
             self._conn.execute("INSERT OR REPLACE INTO session_state (session_id, key, value, updated_at) VALUES (?,?,?,?)",
                                (session_id, key, json.dumps(items), now_iso()))
 
