@@ -25,9 +25,12 @@ def _pg_rule(store):
 def _state(cfg, key):
     s = LedgerStore(cfg)
     try:
-        return s.get_state("s1", key)
+        v = s.get_state("s1", key)
     finally:
         s.close()
+    if key == PENDING_PROMPTS and v is not None:   # queue items carry the time they were typed; compare texts
+        return [x["p"] if isinstance(x, dict) else x for x in v]
+    return v
 
 
 # ------------------------------------------------------------------ skipped prompts are kept

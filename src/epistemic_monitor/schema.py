@@ -76,6 +76,7 @@ class Entry:
     evidence: str = ""  # quote the extractor cited at write time (<= 500 chars); previously only in the intervention log
     evidence_unverified: bool = False  # source=user but the quote has no counterpart in the user turns; display tag only
     revoked_by: str | None = None  # who superseded or retired it ("user" | "agent"); set from the event
+    revoked_at: str | None = None  # when the supersession was applied; valid_to is when it was said, which can be earlier
 
     @property
     def user_authority(self) -> bool:
@@ -102,7 +103,7 @@ class Entry:
             last_verified=d.get("last_verified") or now_iso(), embedding_ref=d.get("embedding_ref"),
             evidence=str(d.get("evidence", "")), evidence_unverified=bool(d.get("evidence_unverified", False)),
             scope_fingerprint={str(k): str(v) for k, v in (d.get("scope_fingerprint") or {}).items()},
-            revoked_by=d.get("revoked_by"),
+            revoked_by=d.get("revoked_by"), revoked_at=d.get("revoked_at"),
         )
 
     def validate(self) -> list[str]:
