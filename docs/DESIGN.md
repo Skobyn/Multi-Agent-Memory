@@ -863,3 +863,14 @@ later than 20 s after evaluation began. It never downgrades: only a recorded sup
 report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
 to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
 the shell would expand `$` or a backtick outside single quotes.
+
+## Addendum (2026-11-20): external events are envelopes; queued prompts are read in the order they were typed
+
+From `docs/RESEARCH-2026-11-20.md` (2611.21259, 2611.02361). `<wake ...>` external events (GitHub PR comments, CI
+results) and `<untrusted_external_data>` are harness envelopes. A SUPERSEDE line or a rule inside one carries no
+user authority. Queue items in `pending_prompts` are `{"p": text, "t": time typed}`, kept sorted by `t`. The Stop
+worker reads them one at a time, oldest first, each dated by its own `t`. It refuses to revive an entry the user
+revoked after that time, and to supersede a user-authority entry made after it (`stale_supersede_refused`). The
+prompt-time run merges only queued prompts typed after the last prompt it extracted, and dates what it writes by
+when the prompt was submitted. Entries from a transcript read are dated by the turn they cite. A supersession
+records `valid_to` (when it was said) and `revoked_at` (when it was applied).

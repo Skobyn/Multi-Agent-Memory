@@ -16,6 +16,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .config import load_config
@@ -426,7 +427,7 @@ def extract_prompts(argv: list[str]) -> int:
     p.add_argument("--session", required=True)
     p.add_argument("--budget", type=float, default=60.0)
     args = p.parse_args(argv)
-    from .hooks import PENDING_PROMPTS, _extractor_for, _newest, _queued, _requeue, _run_failed
+    from .hooks import PENDING_PROMPTS, _extractor_for, _queued, _requeue, _run_failed
     from .throttle import slot
     cfg = load_config()
     with slot("extraction", int(cfg.get("extraction", "max_concurrent", 2))) as got:
@@ -443,25 +444,55 @@ def extract_prompts(argv: list[str]) -> int:
             if not prompts:
                 print(json.dumps({"skipped": "nothing pending"}))
                 return 0
-            turns = [Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=t[-12000:], is_injected=looks_injected(t))
-                     for t, _ in prompts]
-            out = None
-            try:
-                # dated by the newest prompt it reads: a rule or supersession dated after that came from a later
-                # prompt, and an older prompt read now must not undo it
-                out = ex.run(turns, args.session, mode="incremental", as_of=_newest(prompts))
-            finally:
-                if _run_failed(out):   # a failed or cut-short run puts the prompts back (review, 2026-11-18)
-                    _requeue(cfg, store, args.session, prompts)
-            res = out.to_dict()
+            # one run per prompt, oldest first, each dated by when it was typed: a rule or supersession dated after
+            # it came from a later prompt, and this one must not undo it. One date for the batch would be the newest
+            # prompt's, which lets an older prompt in the batch through (review, 2026-11-20).
+            deadline = time.monotonic() + args.budget
+            outs: list[Any] = []
+            failed = False
+            for i, (text, t) in enumerate(prompts):
+                left = deadline - time.monotonic()
+                if left <= 1:
+                    _requeue(cfg, store, args.session, prompts[i:])
+                    failed = True
+                    break
+                ex.time_budget_s = left
+                turn = Turn(uuid="", kind=KIND_USER_TEXT, role="user", text=text[-12000:], is_injected=looks_injected(text))
+                out = None
+                try:
+                    out = ex.run([turn], args.session, mode="incremental", as_of=t)
+                finally:
+                    if _run_failed(out):   # a failed or cut-short run puts this prompt and the rest back (2026-11-18)
+                        _requeue(cfg, store, args.session, prompts[i:])
+                        failed = True
+                if out is not None:
+                    outs.append(out)
+                if failed:
+                    break
+            res = _merge_results(outs)
             if store.dirty:
                 write_pinned(cfg, store)
             store.log_intervention({"kind": "background_extraction", "source": "pending_prompts", "session_id": args.session,
-                                    "prompts": len(prompts), "extraction": res, "requeued": _run_failed(out)})
+                                    "prompts": len(prompts), "extraction": res, "requeued": failed})
             print(json.dumps(res))
         finally:
             store.close()
     return 0
+
+
+def _merge_results(outs: list[Any]) -> dict[str, Any]:
+    """One summary for several extraction runs (the Stop worker reads queued prompts one at a time)."""
+    merged: dict[str, Any] = {}
+    for d in (o.to_dict() for o in outs):
+        for k, v in d.items():
+            if isinstance(v, list):
+                merged[k] = (merged.get(k) or []) + v
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                merged[k] = (merged.get(k) or 0) + v
+    if "errors" in merged:
+        merged["errors"] = merged["errors"][:5]
+    merged["runs"] = len(outs)
+    return merged
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -37,6 +37,7 @@ _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.
 
 
 PENDING_PROMPTS = "pending_prompts"   # session state: user prompts no extraction has read yet
+LAST_LIVE_T = "last_live_extraction_t"   # session state: when the newest prompt a prompt-time run read was typed
 
 
 # ---------------------------------------------------------------- helpers
@@ -472,7 +473,7 @@ def _queued(items: list[Any]) -> list[QueuedPrompt]:
     read out of order keeps whichever rule was read last, not the one said last (arXiv 2611.02361)."""
     out: list[QueuedPrompt] = []
     for x in items:
-        text, t = (x.get("p", ""), x.get("t")) if isinstance(x, dict) else (x, None)
+        text, t = (x.get("p") or "", x.get("t")) if isinstance(x, dict) else (x, None)
         try:
             t = float(t) if t is not None else None
         except (TypeError, ValueError):
@@ -518,6 +519,15 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
                         store.set_state(sid, "last_extraction_ts", time.time())
                         prev = _last_assistant_text(payload.get("transcript_path"))
                         earlier = _queued(store.pop_state(sid, PENDING_PROMPTS))
+                        # only prompts typed after the last prompt this hook extracted are in order with this one; an
+                        # older one (left behind by a deferral or a failed run) goes to the Stop worker, which reads
+                        # each prompt dated by its own time (review, 2026-11-20)
+                        last_live = float(store.get_state(sid, LAST_LIVE_T, 0) or 0)
+                        behind = [it for it in earlier if last_live and (it[1] is None or it[1] < last_live)]
+                        if behind:
+                            _requeue(cfg, store, sid, behind)
+                            record["earlier_prompts_out_of_order"] = len(behind)
+                            earlier = [it for it in earlier if it not in behind]
                         room = int(cfg.get("extraction", "max_chars_per_call", 24000)) - len(prompt[-12000:]) - len(prev[-6000:])
                         if sum(len(p[-12000:]) for p, _ in earlier) > room:
                             # they would push the current prompt (the one the gate may be waiting for) past the first
@@ -534,6 +544,8 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
                             record["extraction"] = res.to_dict()
                         finally:
                             store.clear_state_if(sid, EXTRACTION_INFLIGHT, started)   # a later run's marker stays
+                            if not _run_failed(res):
+                                store.set_state(sid, LAST_LIVE_T, max(submitted, last_live))
                             if _run_failed(res):
                                 # a failed or cut-short run keeps every prompt it was given, the current one included
                                 _requeue(cfg, store, sid, earlier + ([(prompt, submitted)] if not looks_injected(prompt) else []))

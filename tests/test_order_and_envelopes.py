@@ -202,3 +202,99 @@ def test_wake_event_is_not_queued_as_a_user_prompt(cfg, store, monkeypatch):
         assert s.get_state("s1", PENDING_PROMPTS) is None
     finally:
         s.close()
+
+
+# ------------------------------------------------------------------ second round (review of the finished diff)
+def _queue(store, *items):
+    for text, t in items:
+        store.append_state("s1", PENDING_PROMPTS, {"p": text, "t": t}, 8, order_by="t")
+
+
+def test_worker_dates_each_prompt_by_its_own_time(cfg, store, monkeypatch):
+    """P1 queued, P2 revokes its rule live, P3 typed later. One date for the batch (P3's) let P1 revive the rule."""
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
+    t1, t2, t3 = time.time() - 100, time.time() - 50, time.time() - 10
+    make_entry(store, statement=PG)
+    Extractor(store, FakeLLM([_my(_sup("D-0001", "switch to MySQL"))]), None).run_incremental(
+        "ok switch to MySQL", "", "s1", said_at=t2)
+    _queue(store, ("yes use Postgres for this", t1), ("also add a README", t3))
+    llm = FakeLLM([_pg(_sup("D-0002", "use Postgres")), {"entries": []}])
+    _offline(monkeypatch, llm=llm)
+    store.close()
+    assert cli.main(["extract-prompts", "--session", "s1"]) == 0
+    assert len(llm.calls) == 2 and "use Postgres" in llm.calls[0][1] and "README" not in llm.calls[0][1]
+    s = LedgerStore(cfg)
+    try:
+        assert _active(s) == [MY]
+    finally:
+        s.close()
+    rec = _logged(cfg, "background_extraction")[-1]
+    assert rec["extraction"]["runs"] == 2 and rec["requeued"] is False
+
+
+def test_worker_failure_requeues_this_prompt_and_the_rest(cfg, store, monkeypatch):
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
+    _queue(store, ("never touch vendor/", 1.0), ("always use ISO dates", 2.0), ("tabs not spaces", 3.0))
+    _offline(monkeypatch, llm=FakeLLM([{"entries": []}, "503 not json"]))
+    store.close()
+    cli.main(["extract-prompts", "--session", "s1"])
+    s = LedgerStore(cfg)
+    try:
+        assert _queued(s.get_state("s1", PENDING_PROMPTS)) == [("always use ISO dates", 2.0), ("tabs not spaces", 3.0)]
+    finally:
+        s.close()
+
+
+def test_live_run_leaves_prompts_older_than_its_last_run_to_the_worker(cfg, store, monkeypatch):
+    llm = FakeLLM([{"entries": []}, {"entries": []}])
+    _offline(monkeypatch, llm=llm)
+    store.close()
+    _run("user_prompt_submit", {"prompt": "ok switch the database to MySQL"}, cfg)   # a live run: sets the mark
+    s = LedgerStore(cfg)
+    last = s.get_state("s1", "last_live_extraction_t")
+    _queue(s, ("yes use Postgres for this", last - 30), ("and add a README too", last + 0.5))
+    s.set_state("s1", "last_extraction_ts", 0)
+    s.close()
+    _run("user_prompt_submit", {"prompt": "now write the migration"}, cfg)
+    assert "use Postgres" not in llm.calls[1][1] and "README" in llm.calls[1][1]
+    assert _logged(cfg, "prompt")[-1]["earlier_prompts_out_of_order"] == 1
+    s = LedgerStore(cfg)
+    try:
+        assert [p for p, _ in _queued(s.get_state("s1", PENDING_PROMPTS))] == ["yes use Postgres for this"]
+    finally:
+        s.close()
+
+
+def test_agent_entry_made_late_does_not_block_a_user_revision(cfg, store):
+    """The agent says "I'll use Postgres"; the user types "no, MySQL" (queued); the agent's entry is extracted at Stop,
+    after the user typed. The user's revision must still apply."""
+    make_entry(store, statement=PG, source="agent", confirmed=False)
+    res = _drain(store, [_my(_sup("D-0001", "switch to MySQL"))], "no, not Postgres, switch to MySQL", time.time() - 30)
+    assert store.get_entry("D-0001").status == "superseded" and res.superseded[0]["ok"] is True
+
+
+def test_transcript_read_dates_entries_by_the_turn_they_cite(cfg, store):
+    said = "2026-11-01T09:30:00.250Z"
+    turns = [Turn(uuid="u-1", kind=KIND_USER_TEXT, role="user", text="use Postgres", timestamp=said)]
+    reply = {"entries": [dict(_pg()["entries"][0], turn_uuid="u-1")]}
+    Extractor(store, FakeLLM([reply]), None).run(turns, "s1")
+    assert store.get_entry("D-0001").valid_from == "2026-11-01T09:30:00Z"
+
+
+def test_feedback_counts_a_revision_applied_after_the_gate(cfg, store):
+    from epistemic_monitor.feedback import why_report as explain
+    make_entry(store, statement=PG)
+    store.supersede("D-0001", None, "user changed it", by="user", valid_to="2020-01-01T00:00:00Z")   # said long ago
+    gate = {"kind": "gate", "tool_use_id": "tu1", "ts": "2021-01-01T00:00:00Z", "flagged": ["D-0001"]}
+    row = explain([gate], "tu1", store.get_entry)["entries"][0]
+    assert row["later"] and row["later"][0]["applied"]
+
+
+def test_null_queue_text_is_dropped():
+    assert _queued([{"p": None, "t": 1.0}, {"t": 2.0}]) == []
+
+
+def test_wake_as_an_english_word_is_not_an_envelope():
+    text = "Map the hotword to <wake word> on the device.\nNever push to main."
+    assert "Never push to main" in own_words(text)
+    assert not looks_injected("<wake up at 7 and run the backup>")

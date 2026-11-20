@@ -74,7 +74,7 @@ class ReadStats:
 # boundaries break at delegation and event relays). ``<untrusted_external_data>`` is the harness's label for the same
 # kind of text inside such an event.
 _INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-message", "Another Claude session sent a message",
-                      "<local-command-stdout>", "<local-command-stderr>", "<wake>", "<wake ", "<wake\n",
+                      "<local-command-stdout>", "<local-command-stderr>", "<wake>", "<wake reason=",
                       "<untrusted_external_data")
 
 
@@ -87,8 +87,10 @@ def looks_injected(text: str) -> bool:
     return (text or "").translate(_INVISIBLE).lstrip().startswith(_INJECTED_PREFIXES)
 
 
+# ``wake`` only with the harness's ``reason=`` attribute or bare: "<wake word>" in a user's own prompt is not one, and
+# an unclosed envelope runs to the end of the prompt
 _ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr",
-                  "wake", "untrusted_external_data")
+                  r"wake(?=\s+reason=|\s*>)", "untrusted_external_data")
 # the tag name must end at whitespace, ``/`` or ``>``: ``<wakeup>`` and ``<wake-up>`` are not envelopes
 _ENVELOPE_RE = re.compile(r"<(%s)(?=[\s/>])[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
 # a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at

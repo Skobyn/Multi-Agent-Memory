@@ -125,7 +125,7 @@ class LedgerStore:
             old, new = self.get_entry(ev["old"]), self.get_entry(ev["new"]) if ev.get("new") else None
             if old is not None:
                 d = old.to_dict()
-                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("valid_to") or ev.get("ts") or now_iso(),
+                d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("valid_to") or ev.get("ts") or now_iso(), revoked_at=ev.get("ts") or now_iso(),
                          revoked_by=ev.get("by"))
                 self._upsert(Entry.from_dict(d))
             if new is not None and ev["old"] not in new.supersedes:

@@ -62,8 +62,10 @@ def why_report(interventions: list[dict[str, Any]], tool_use_id: str, get_entry)
         e = get_entry(eid)
         # The entry itself records when it was closed (valid_to) and by what; intervention logs are not complete for this.
         later = []
-        if e is not None and e.valid_to and e.valid_to > ts:
-            later.append({"kind": e.status, "by": e.superseded_by or "", "ts": e.valid_to})
+        # a revision said before the gate ran but applied after it (a queued prompt) still came later for the gate
+        closed = max(e.valid_to or "", e.revoked_at or "") if e is not None else ""
+        if closed and closed > ts:
+            later.append({"kind": e.status, "by": e.superseded_by or "", "ts": e.valid_to, "applied": e.revoked_at})
         sc = (gate.get("scores") or {}).get(eid) or {}
         rows.append({"entry": eid, "flagged": eid in (gate.get("flagged") or []), "p_conflict": sc.get("p_conflict"),
                      "status": e.status if e else "missing", "statement": e.statement if e else "",

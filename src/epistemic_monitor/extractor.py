@@ -93,19 +93,29 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _parse_stamp(stamp: str | None) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=timezone.utc)
+
+
+def _valid_stamp(stamp: str | None) -> bool:
+    return bool(stamp) and _parse_stamp(stamp) is not None
+
+
+def _norm_stamp(stamp: str) -> str:
+    """A transcript timestamp in the ledger's format (whole seconds, ``Z``), so string sorts stay consistent."""
+    return _iso(_parse_stamp(stamp).timestamp())
+
+
 def _later_than(stamp: str | None, as_of: float | None) -> bool:
     """Is the ISO ``stamp`` strictly after ``as_of`` (epoch)? Compared as instants, never as strings (``...05Z`` sorts
     after ``...05.123Z``). Unknown either side: False (nothing is refused for a date it cannot read). Stamps have
     whole-second resolution, so a stamp in the same second as ``as_of`` is not later."""
-    if not stamp or as_of is None:
-        return False
-    try:
-        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
-    return t.timestamp() >= int(as_of) + 1
+    t = _parse_stamp(stamp) if stamp and as_of is not None else None
+    return t is not None and t.timestamp() >= int(as_of) + 1
 
 
 BODY_INDENT = "  | "
@@ -312,7 +322,8 @@ class Extractor:
             result.input_tokens += comp.input_tokens
             self._apply(data, active, session_id, bool(chunk_user_texts), result, chunk_user_texts,
                         forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text],
-                        as_of=as_of, said_at=said_at)
+                        as_of=as_of, said_at=said_at,
+                        turn_times={t.uuid: t.timestamp for t in chunk if t.uuid and t.timestamp})
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
@@ -330,9 +341,10 @@ class Extractor:
     def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
                user_texts: list[str] | None = None, forged_texts: list[str] | None = None,
                assistant_texts: list[str] | None = None, as_of: float | None = None,
-               said_at: float | None = None) -> None:
+               said_at: float | None = None, turn_times: dict[str, str] | None = None) -> None:
         dated = as_of if as_of is not None else said_at
         stamp = _iso(dated) if dated is not None else None
+        turn_times = turn_times or {}
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -432,6 +444,9 @@ class Extractor:
             )
             if stamp:
                 entry.valid_from = stamp
+            elif _valid_stamp(turn_times.get(entry.provenance.turn_uuid)):
+                # a transcript read (compaction, session end): dated by the turn it cites, not by when it was read
+                entry.valid_from = _norm_stamp(turn_times[entry.provenance.turn_uuid])
             if etype == "premise" and source != "user" and self.store.config.get("drift", "enabled", False):
                 from .drift import fingerprint
                 entry.scope_fingerprint = fingerprint(self.store.config.cwd, scope.paths)
@@ -479,9 +494,11 @@ class Extractor:
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
             target = self.store.get_entry(s["old"].strip().upper())
-            if target is not None and _later_than(target.valid_from, as_of):
-                # the entry was made after the turn this supersession comes from (an older queued prompt read after a
-                # newer one): applying it would put the older rule back over the newer one
+            if target is not None and target.user_authority and _later_than(target.valid_from, as_of):
+                # the user made the entry after the turn this supersession comes from (an older queued prompt read
+                # after a newer one): applying it would put the older rule back over the newer one. Agent entries are
+                # not guarded: they are often dated when extracted, after the user's words, and a stale supersession of
+                # one costs no user rule (review, 2026-11-20)
                 self.store.log_intervention({"kind": "stale_supersede_refused", "old": target.id, "by": by,
                                              "entry_valid_from": target.valid_from, "as_of": stamp,
                                              "session_id": session_id})
