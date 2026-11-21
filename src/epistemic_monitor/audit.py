@@ -13,8 +13,9 @@ ENTAILMENT_INSTRUCTIONS = ("Does the summary preserve this decision so that an a
                            "would still know about it and honor it?")
 ENTAILMENT_CRITERIA = {"true": "The summary states the decision, constraint, or requirement, or states it in different "
                                "words with the same effect.",
-                       "false": "The summary omits it, contradicts it, or mentions the topic without the actual "
-                                "decision, constraint, or requirement."}
+                       "false": "The summary omits it, contradicts it, mentions the topic without the actual "
+                                "decision, constraint, or requirement, or presents a standing requirement or "
+                                "commitment as already discharged or no longer applying."}
 
 STOP_INSTRUCTIONS = ("Does the assistant message state, decide, or rely on something that contradicts one of the "
                      "listed entries?")

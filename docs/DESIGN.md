@@ -863,3 +863,15 @@ later than 20 s after evaluation began. It never downgrades: only a recorded sup
 report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
 to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
 the shell would expand `$` or a backtick outside single quotes.
+
+## Addendum (2026-11-21): data-dir writes, supersession provenance
+
+From `docs/RESEARCH-2026-11-21.md` (2611.23346, 2611.26361, 2611.25673). A Write, Edit, MultiEdit or NotebookEdit
+whose resolved path is under the data dir gets an advisory note (`gate.data_dir_flag`, default on) and a
+`data_dir_write` record. So does a Bash command that names the data dir or the store and is not purely read-only. The
+note never denies, and a gate deny stands unchanged. A granted `/ledger` command returns before the gate and is not
+flagged. This is not tamper-proofing: the agent runs as the same user, so no hash chain or key is out of its reach.
+A supersede event records the quote that authorized it (`evidence`) and a `turn_uuid`. The superseded entry keeps the
+quote as `revoked_evidence`, which is display and audit only. A `turn_uuid` the extractor's model names is kept only
+if it is one of the chunk's turns. The entailment audit's "false" case includes a summary that presents a standing
+requirement as already discharged.

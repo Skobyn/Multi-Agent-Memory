@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import authority, background, hooklib
+from . import authority, background, datadir, hooklib
 from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
@@ -58,7 +58,8 @@ def _apply_supersede_lines(text: str, by: str, store: LedgerStore, session_id: s
         if eid not in own_ids:
             store.log_intervention({"kind": "supersede_ignored_quoted", "entry": eid, "by": by, "session_id": session_id})
     for m in _SUPERSEDE_RE.finditer(own):
-        ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id)
+        ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id,
+                             evidence=m.group(0).strip())
         applied.append({"entry": m.group(1).upper(), "by": by, "ok": ok})
         store.log_intervention({"kind": "supersede", "entry": m.group(1).upper(), "by": by, "ok": ok,
                                 "reason": m.group(2).strip(), "session_id": session_id})
@@ -526,6 +527,7 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     tool = str(payload.get("tool_name") or "")
     if tool not in cfg.get("gate", "tools", []):
         return None
+    dd_hit = datadir.touched(tool, payload.get("tool_input"), cfg) if cfg.get("gate", "data_dir_flag", True) else None
     if tool == "Bash" and cfg.get("gate", "authority_check", True):
         ti = payload.get("tool_input")
         command = str(ti.get("command") or "") if isinstance(ti, dict) else ""
@@ -585,6 +587,14 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
             output = hooklib.additional_context("pre_tool_use", "\n".join(notes))
     if payload.get("agent_id") and result.decision in ("deny", "advisory") and result.conflicts:
         _note_subagent_hit(store, sid, str(payload["agent_id"]), result.conflicts, result.decision)
+    if dd_hit is not None:
+        # advisory only, never a deny: a granted `/ledger` command returned above, so this is not the user's own edit
+        store.log_intervention({"kind": "data_dir_write", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
+                                "agent_id": payload.get("agent_id"), "tool": tool, "matched": dd_hit[:200],
+                                "gate_decision": result.decision})
+        if result.decision != "deny":
+            prior = ((output or {}).get("hookSpecificOutput") or {}).get("additionalContext")
+            output = hooklib.additional_context("pre_tool_use", (prior + "\n" if prior else "") + datadir.note(dd_hit))
     store.log_intervention({"kind": "gate", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
                             "agent_id": payload.get("agent_id"),
                             "enforce": bool(cfg.get("gate", "enforce", True)),

@@ -88,6 +88,11 @@ def _fmt_entry(e: Entry, verbose: bool = False) -> str:
         parts.append(f"    anchors: {', '.join(e.anchors[:12])}")
     if e.depends_on or e.supersedes or e.superseded_by:
         parts.append(f"    depends_on={e.depends_on} supersedes={e.supersedes} superseded_by={e.superseded_by}")
+    if e.evidence:
+        parts.append(f"    evidence{' [unverified]' if e.evidence_unverified else ''}: \"{e.evidence}\""
+                     + (f" (turn {e.provenance.turn_uuid})" if e.provenance.turn_uuid else ""))
+    if e.revoked_by:
+        parts.append(f"    revoked by {e.revoked_by}" + (f": \"{e.revoked_evidence}\"" if e.revoked_evidence else ""))
     parts.append(f"    recorded {e.provenance.timestamp} in session {e.provenance.session_id or '?'}"
                  f" (confidence {e.provenance.extraction_confidence:.2f})")
     return "\n".join(parts)
