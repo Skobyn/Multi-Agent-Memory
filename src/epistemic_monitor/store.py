@@ -126,7 +126,7 @@ class LedgerStore:
             if old is not None:
                 d = old.to_dict()
                 d.update(status="superseded", superseded_by=ev.get("new"), valid_to=ev.get("ts") or now_iso(),
-                         revoked_by=ev.get("by"))
+                         revoked_by=ev.get("by"), revoked_evidence=str(ev.get("evidence") or "")[:500])
                 self._upsert(Entry.from_dict(d))
             if new is not None and ev["old"] not in new.supersedes:
                 d = new.to_dict()
@@ -249,7 +249,8 @@ class LedgerStore:
                 groups.append(group)
         return groups
 
-    def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "") -> bool:
+    def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "",
+                  evidence: str = "", turn_uuid: str = "") -> bool:
         """Apply the authority rule (DESIGN §3): a user-provenance entry can only be
         superseded with ``by="user"``. Returns False when refused."""
         old = self.get_entry(old_id)
@@ -259,8 +260,12 @@ class LedgerStore:
             self.log_intervention({"kind": "supersede_refused", "entry": old_id, "by": by,
                                    "reason": reason, "session_id": session_id})
             return False
-        self._apply_event({"event": "supersede", "old": old_id, "new": new_id, "reason": reason,
-                           "by": by, "session_id": session_id})
+        ev = {"event": "supersede", "old": old_id, "new": new_id, "reason": reason, "by": by, "session_id": session_id}
+        if evidence:  # the words that authorized it; before 2026-11-21 they reached no record when the check passed
+            ev["evidence"] = evidence[:500]
+        if turn_uuid:
+            ev["turn_uuid"] = turn_uuid[:64]
+        self._apply_event(ev)
         return True
 
     def set_embedding(self, entry_id: str, embedding: list[float]) -> None:

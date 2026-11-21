@@ -60,7 +60,8 @@ For each entry give:
 Reply with ONLY a JSON object:
 {"entries":[{"type":"decision","statement":"...","rationale":"...","source":"user","evidence":"...","turn_uuid":"...",
              "scope":{"paths":[],"tools":[],"topics":[]},"falsifiers":[],"depends_on":[],"confidence":0.9}],
- "supersedes":[{"old":"D-0001","reason":"...","by":"user|agent","evidence":"short verbatim quote of the user's words"}]}
+ "supersedes":[{"old":"D-0001","reason":"...","by":"user|agent","evidence":"short verbatim quote of the user's words",
+                 "turn_uuid":"..."}]}
 At most 10 entries. Empty lists are fine. No prose.
 
 Turn boundaries: a turn starts only at a label in the first column, "[user <uuid>]:", "[assistant <uuid>]:" or
@@ -285,7 +286,8 @@ class Extractor:
             result.llm_latency_ms += comp.latency_ms
             result.input_tokens += comp.input_tokens
             self._apply(data, active, session_id, bool(chunk_user_texts), result, chunk_user_texts,
-                        forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text])
+                        forged_label_texts(chunk), [t.text for t in chunk if t.kind == KIND_ASSISTANT_TEXT and t.text],
+                        {t.uuid for t in chunk if t.uuid})
         return result
 
     def run_incremental(self, prompt_text: str, prev_assistant_text: str, session_id: str,
@@ -302,7 +304,12 @@ class Extractor:
     # ------------------------------------------------------------------ private
     def _apply(self, data: dict, active: list[Entry], session_id: str, has_user_turn: bool, result: ExtractionResult,
                user_texts: list[str] | None = None, forged_texts: list[str] | None = None,
-               assistant_texts: list[str] | None = None) -> None:
+               assistant_texts: list[str] | None = None, turn_uuids: set[str] | None = None) -> None:
+        # a turn_uuid the model names must be one of this chunk's turns: an invented pointer looks real downstream
+        def checked_uuid(raw: Any) -> str:
+            u = str(raw or "").strip()[:64]
+            return u if u and u in (turn_uuids or set()) else ""
+
         known_ids = {e.id for e in self.store.entries(None)}
         normalized_active = {_normalize(e.statement): e for e in active}
         candidates = data.get("entries") if isinstance(data, dict) else None
@@ -393,7 +400,7 @@ class Extractor:
                 id=self.store.next_id(etype), type=etype, statement=statement[:500], rationale=rationale,
                 scope=scope, falsifiers=falsifiers,
                 anchors=extract_anchors(statement, evidence, rationale, *scope.paths),
-                provenance=Provenance(source=source, session_id=session_id, turn_uuid=str(c.get("turn_uuid", ""))[:64],
+                provenance=Provenance(source=source, session_id=session_id, turn_uuid=checked_uuid(c.get("turn_uuid")),
                                       timestamp=now_iso(), confirmed_by_user=(source == "user"), extraction_confidence=conf),
                 depends_on=depends, evidence=evidence, evidence_unverified=unverified,
             )
@@ -443,7 +450,10 @@ class Extractor:
                 by = "agent"  # claimed user words that match nothing the user wrote as their own: no user authority
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
-            ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id)
+            ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id,
+                                      # a demoted claim's quote is not shown as the reason (it is in the log above)
+                                      evidence="" if demote else str(s.get("evidence", ""))[:500],
+                                      turn_uuid=checked_uuid(s.get("turn_uuid")))
             result.superseded.append({"old": s["old"], "by": by, "ok": ok})
 
     def _embed(self, text: str) -> list[float] | None:
