@@ -104,3 +104,37 @@ def test_flag_can_be_turned_off(cfg, store, offline, monkeypatch):
     store.close()
     monkeypatch.setenv("EPISTEMIC_GATE_DATA_DIR_FLAG", "false")
     assert _run({"tool_name": "Bash", "tool_input": {"command": f"rm {cfg.ledger_path}"}}, cfg) is None
+
+
+def test_second_round_false_negatives(cfg, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))          # data_dir is tmp_path/epistemic, so ~/epistemic names it
+    D = cfg.data_dir
+    for cmd in ("rm -rf ~/epistemic", "cd $HOME/epistemic && rm *", "rm ~/.claude/projects/*/epist*/*",
+                f"cat x & rm {D}/ledger.jsonl", f"sort -o {D}/ledger.jsonl {D}/ledger.jsonl",
+                f"sed -ni 's/a/b/' {D}/ledger.jsonl", f"find {D} -name '*.db' -delete",
+                f"git checkout -- {D}/ledger.jsonl"):
+        assert datadir.touched("Bash", {"command": cmd}, cfg), cmd
+
+
+def test_second_round_false_positives(cfg):
+    D = cfg.data_dir
+    for cmd in (f"grep -i foo {D}/ledger.jsonl", f"sed -n 1,5p {D}/ledger.jsonl", f"find {D} -name '*.jsonl'",
+                f"cat {D}/ledger.jsonl >>/dev/null", f"cat {D}/ledger.jsonl 2>&1 | tail -3",
+                "sqlite3 index.db 'insert into t values (1)'", "touch pinned.md", "mkdir -p docs/epistemic/notes",
+                "git commit -m 'store: replay ledger.jsonl via LedgerStore'", "python3 -m pytest -k LedgerStore",
+                f"git log -- {D}"):
+        assert datadir.touched("Bash", {"command": cmd}, cfg) is None, cmd
+
+
+def test_multiedit_is_flagged(cfg):
+    assert datadir.touched("MultiEdit", {"file_path": str(cfg.ledger_path), "edits": []}, cfg)
+
+
+def test_note_survives_an_authority_advisory(cfg, store, offline, monkeypatch):
+    make_entry(store)
+    store.close()
+    monkeypatch.setenv("EPISTEMIC_GATE_ENFORCE", "false")
+    cmd = f'em-hook ledger confirm D-0001 && sed -i "s/a/b/" {cfg.ledger_path}'
+    out = _run({"tool_name": "Bash", "tool_input": {"command": cmd}}, cfg)["hookSpecificOutput"]
+    assert out["additionalContext"].startswith("Epistemic monitor note: this call writes into")
+    assert [r["gate_decision"] for r in _flagged(cfg)] == ["advisory"]

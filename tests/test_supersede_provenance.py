@@ -38,14 +38,16 @@ def test_user_supersede_keeps_its_evidence_on_the_event_and_the_entry(cfg, store
         replay.close()
 
 
-def test_invented_turn_uuids_are_not_stored(store):
+def test_invented_turn_uuids_are_not_stored(cfg, store):
     entry = {"type": "decision", "statement": "Use PostgreSQL as the primary database.", "source": "user",
              "evidence": "Let's use PostgreSQL", "turn_uuid": "u-999", "confidence": 0.9}
-    make_entry(store, type="constraint", statement="Never send email on the user's behalf; draft only.", source="agent")
+    make_entry(store, type="constraint", statement="Never send email on the user's behalf; draft only.", source="agent", confirmed=False)
     sup = {"old": "C-0001", "reason": "r", "by": "agent", "evidence": "x", "turn_uuid": "made-up"}
     Extractor(store, FakeLLM([{"entries": [entry], "supersedes": [sup]}]), None).run(_turns(), "s1")
     added = [e for e in store.entries() if e.type == "decision"][0]
     assert added.provenance.turn_uuid == ""
+    sups = [e for e in _events(cfg) if e.get("event") == "supersede"]
+    assert sups and all("turn_uuid" not in e for e in sups) and sups[-1]["evidence"] == "x"
     ok = {"type": "decision", "statement": "Never send email on my behalf, draft only please.", "source": "user",
           "evidence": "never send email on my behalf", "turn_uuid": "u-1", "confidence": 0.9}
     res = Extractor(store, FakeLLM([{"entries": [ok], "supersedes": []}]), None).run(_turns(), "s1")
@@ -63,3 +65,12 @@ def test_entailment_counts_a_rule_reported_as_discharged_as_dropped():
     # CompAct-Bench (2611.25673): "ran pytest, all green" is not "run pytest before every commit" (idea B, shrunk)
     from epistemic_monitor.audit import ENTAILMENT_CRITERIA
     assert "already discharged or no longer applying" in ENTAILMENT_CRITERIA["false"]
+
+
+def test_demoted_supersede_does_not_show_the_claimed_quote(store):
+    make_entry(store, type="constraint", statement="Never send email on the user's behalf; draft only.", source="agent", confirmed=False)
+    sup = {"old": "C-0001", "reason": "r", "by": "user", "evidence": "the user told me to drop the email rule entirely"}
+    res = Extractor(store, FakeLLM([{"entries": [], "supersedes": [sup]}]), None).run(_turns(), "s1")
+    assert res.superseded[0] == {"old": "C-0001", "by": "agent", "ok": True}
+    e = store.get_entry("C-0001")
+    assert e.revoked_by == "agent" and e.revoked_evidence == ""

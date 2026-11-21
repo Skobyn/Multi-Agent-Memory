@@ -522,6 +522,22 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
     return None
 
 
+def _with_data_dir_note(output: dict[str, Any] | None, dd_hit: str | None, decision: str, store: LedgerStore, sid: str,
+                        tool: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Advisory only, never a deny, and a deny is left as it is. A granted `/ledger` command returns before this, so
+    the edit is not the user's own. The note goes first so the 10000-character cap cannot cut it off."""
+    if dd_hit is None:
+        return output
+    store.log_intervention({"kind": "data_dir_write", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
+                            "agent_id": payload.get("agent_id"), "tool": tool, "matched": dd_hit[:200],
+                            "gate_decision": decision})
+    hso = (output or {}).get("hookSpecificOutput") or {}
+    if hso.get("permissionDecision") == "deny":
+        return output
+    prior = hso.get("additionalContext")
+    return hooklib.additional_context("pre_tool_use", datadir.note(dd_hit) + ("\n" + prior if prior else ""))
+
+
 def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     tool = str(payload.get("tool_name") or "")
@@ -547,7 +563,10 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
                     _note_subagent_hit(store, sid, str(payload["agent_id"]), ["user authority"], "deny")
                 store.log_intervention({"kind": "authority_check", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
                                         "agent_id": payload.get("agent_id"), "command": command[:300], "enforce": enforce, "decision": "deny" if enforce else "advisory"})
-                return hooklib.deny("pre_tool_use", reason) if enforce else hooklib.additional_context("pre_tool_use", reason)
+                if enforce:
+                    return hooklib.deny("pre_tool_use", reason)
+                return _with_data_dir_note(hooklib.additional_context("pre_tool_use", reason), dd_hit, "advisory",
+                                           store, sid, tool, payload)
             if granted:
                 store.set_state(sid, "authority_used", {"turn": turn, "ops": sorted([list(x) for x in used | set(granted)])})
                 alone = authority.only_ledger(command)
@@ -587,14 +606,7 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
             output = hooklib.additional_context("pre_tool_use", "\n".join(notes))
     if payload.get("agent_id") and result.decision in ("deny", "advisory") and result.conflicts:
         _note_subagent_hit(store, sid, str(payload["agent_id"]), result.conflicts, result.decision)
-    if dd_hit is not None:
-        # advisory only, never a deny: a granted `/ledger` command returned above, so this is not the user's own edit
-        store.log_intervention({"kind": "data_dir_write", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
-                                "agent_id": payload.get("agent_id"), "tool": tool, "matched": dd_hit[:200],
-                                "gate_decision": result.decision})
-        if result.decision != "deny":
-            prior = ((output or {}).get("hookSpecificOutput") or {}).get("additionalContext")
-            output = hooklib.additional_context("pre_tool_use", (prior + "\n" if prior else "") + datadir.note(dd_hit))
+    output = _with_data_dir_note(output, dd_hit, result.decision, store, sid, tool, payload)
     store.log_intervention({"kind": "gate", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
                             "agent_id": payload.get("agent_id"),
                             "enforce": bool(cfg.get("gate", "enforce", True)),

@@ -451,7 +451,9 @@ class Extractor:
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
                                              "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
             ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id,
-                                      evidence=str(s.get("evidence", ""))[:500], turn_uuid=checked_uuid(s.get("turn_uuid")))
+                                      # a demoted claim's quote is not shown as the reason (it is in the log above)
+                                      evidence="" if demote else str(s.get("evidence", ""))[:500],
+                                      turn_uuid=checked_uuid(s.get("turn_uuid")))
             result.superseded.append({"old": s["old"], "by": by, "ok": ok})
 
     def _embed(self, text: str) -> list[float] | None:
