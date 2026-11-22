@@ -33,23 +33,31 @@ def has_negation(text: str) -> bool:
     return bool(_NEGATION_RE.search(text))
 
 
+_VERB = r"(?:skip|ignore|edit|push|delete|bypass|disable|force|merge|commit|deploy|override|change|modify|drop|omit)"
 _PERMIT_RE = re.compile(
-    r"\b(?:allowed|permitted|permission|approved?|authori[sz]ed|exempt(?:ed|ion)?|exceptions?|waived?|bypass(?:ed|ing)?|"
-    r"ok(?:ay)? to|fine to|free to|safe to|may|can skip|no need|not (?:required|necessary|needed)|"
-    r"(?:do|does)(?:n['’]?t| not) (?:need|have) to|skip(?:s|ped|ping)?)\b", re.IGNORECASE)
+    r"\b(?:allow(?:ed)?|permitted|permission|authori[sz]ed|exempt(?:ed|ion)?|waived?|bypass(?:ed|ing)?|"
+    r"approved (?:to|for|editing|pushing|skipping|deleting|merging)|(?:the )?user approved|"
+    r"(?:is|are) (?:fine|ok(?:ay)?|acceptable|optional)|acceptable|optional|ok(?:ay)? (?:to|for)|fine to|free to|"
+    r"safe to|may " + _VERB + r"|can (?:be )?(?:skip(?:ped)?|ignored?|bypass(?:ed)?|disabled?)|can \w+ without|"
+    r"no need|not (?:required|necessary|needed)|no longer (?:required|needed)|"
+    r"(?:do|does)(?:n['’]?t| not) (?:need|have) to|(?:do|does)(?:n['’]?t| not) require|skip(?:s|ped|ping)?)\b",
+    re.IGNORECASE)
 _PROHIBIT_RE = re.compile(
-    r"\b(?:never|must not|mustn['’]?t|shall not|cannot|can['’]?t|may not|forbidden|prohibited|not (?:allowed|permitted|"
-    r"approved|authori[sz]ed)|requires?|must|always)\b|\b(?:do not|don['’]?t)\b(?! (?:need|have) to)", re.IGNORECASE)
+    r"\b(?:never|must not|mustn['’]?t|shall not|cannot|can['’]?t|may not|may only|forbidden|prohibited|avoid(?:ing)?|"
+    r"no exceptions?|only|not (?:allowed|permitted|approved|authori[sz]ed|optional|ok(?:ay)?|fine)|must|always)\b|"
+    r"(?<!n['’]t )(?<!not )\brequires?\b|\b(?:do not|don['’]?t)\b(?! (?:need|have|require) )", re.IGNORECASE)
+_CLAUSE_RE = re.compile(r"[;:.!?]\s|,\s*(?=but\b|except\b|though\b|unless\b|and\b)|\b(?:but|except|though|unless|whereas)\b",
+                        re.IGNORECASE)
 
 
 def is_permissive(text: str) -> bool:
-    """Does the statement grant a permission, exception or approval ("skipping tests for docs/ is allowed", "the
-    user approved force-pushing", "no need to run lint") rather than restrict? Restrictive wording wins ("never skip
-    tests", "requires approval"). Crude on purpose: it is consulted only for a claimed user entry whose quote was not
-    found in the user's turns, where a false hit costs that entry its user authority (Weighing the Envelope, arXiv
-    2611.23844: memory wording that grants authorization erodes a verification rule in proportion to its dose)."""
-    t = text or ""
-    return bool(_PERMIT_RE.search(t)) and not _PROHIBIT_RE.search(t)
+    """Does any clause of the statement grant a permission, exception or approval ("skipping tests for docs/ is
+    allowed", "the user approved force-pushing", "no need to run lint", "hotfixes may skip review but must be
+    tested")? Within a clause, restrictive wording wins ("never skip tests", "requires approval", "no exceptions").
+    Crude on purpose: it is consulted only for a claimed user entry whose quote was not found in the user's turns,
+    where a false hit costs that entry its user authority (Weighing the Envelope, arXiv 2611.23844: memory wording
+    that grants authorization erodes a verification rule in proportion to its dose)."""
+    return any(_PERMIT_RE.search(c) and not _PROHIBIT_RE.search(c) for c in _CLAUSE_RE.split(text or "") if c)
 
 
 def now_iso() -> str:

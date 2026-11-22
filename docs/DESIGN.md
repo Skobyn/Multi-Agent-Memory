@@ -863,3 +863,30 @@ later than 20 s after evaluation began. It never downgrades: only a recorded sup
 report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
 to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
 the shell would expand `$` or a backtick outside single quotes.
+
+## Addendum (2026-11-22): the ledger data is not the agent's to write; only the user's words grant
+
+From `docs/RESEARCH-2026-11-22.md` (2611.23346, 2611.23844). `data_guard.check` runs at the top of PreToolUse,
+ahead of the `gate.tools` filter. It denies Edit, Write, MultiEdit and NotebookEdit under the data dir. It also
+denies Bash that writes the data dir, checked against paths resolved from the cwd and any `cd`:
+- a file command;
+- an in-place edit;
+- a redirect;
+- `find -delete`;
+- sqlite3 run with no read-only SQL argument;
+- a Python write;
+- a heredoc;
+- a script that drives `epistemic_monitor.store`;
+- removal of a directory that holds the data dir.
+
+Pure `em-hook ledger ...` commands are left to the authority check. The guard fails closed
+(`gate.data_dir_guard`, default on). When `gate.enforce` is off it is advisory and falls through to the gate.
+`LedgerStore` refuses a status, entry_update, entry_add or supersede event without `by == "user"` that would take a
+user-authority entry out of `active`, close it for good, strip its authority, or rewrite more than its bookkeeping
+fields. This holds both live and on replay, and is logged as `user_entry_write_refused`. A forged `by: user` line
+still replays; the guard is what keeps the agent from writing one.
+
+In the extractor, a claimed-user entry whose quote is not found in the user's turns, or is too short to check,
+becomes an agent entry if any clause of its statement grants a permission or exception (`schema.is_permissive`;
+logged as `permissive_claim_demoted`). This applies even to constraint and process types. The pin header says agent
+entries grant nothing. Unverified evidence is never printed as "user said".

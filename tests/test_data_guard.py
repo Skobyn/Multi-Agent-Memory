@@ -189,3 +189,65 @@ def test_direct_sqlite_write_still_needs_the_guard(cfg, store):
     c.commit()
     c.close()
     assert _check(cfg, f"sqlite3 {cfg.index_path} \"update entries set status='retired' where id='D-0001'\"")
+
+
+# ------------------------------------------------------------------ second round: review of the finished diff
+
+def test_forged_supersede_of_a_user_entry_is_refused_on_replay(cfg, store):
+    make_entry(store)
+    store.close()
+    e = _forge_and_rebuild(cfg, {"event": "supersede", "old": "D-0001", "new": None, "by": "agent"})
+    assert e.status == "active"
+
+
+def test_a_user_review_item_cannot_be_retired_without_the_user(cfg, store):
+    e = make_entry(store)
+    store._upsert(type(e).from_dict(e.to_dict() | {"status": "unknown_current"}))
+    store._apply_event({"event": "status", "id": e.id, "status": "retired"})
+    store._apply_event({"event": "entry_update", "id": e.id, "fields": {"status": "superseded"}})
+    assert store.get_entry(e.id).status == "unknown_current"
+    assert store.resolve(e.id, keep=False, by="user")
+    assert store.get_entry(e.id).status == "retired"
+
+
+def test_a_refused_add_does_not_overwrite_the_index(cfg, store):
+    e = make_entry(store)
+    forged = type(e).from_dict(e.to_dict() | {"statement": "Use MongoDB.", "provenance": {"source": "agent"}})
+    try:
+        store.add_entry(forged, embedding=[0.1, 0.2])
+    except ValueError:
+        pass
+    assert store.get_entry(e.id).statement == "Use PostgreSQL as the primary database."
+
+
+def test_guard_false_positives_on_project_files(cfg):
+    for cmd in ["git rm --cached build/index.db", "cp fixtures/index.db /tmp/x.db", "touch config/calibration.json",
+                'git commit -m "guard: deny rm of index.db"', "sed -i 's/ledger.jsonl/events.jsonl/' README.md",
+                'sqlite3 app/index.db "create table t(x)"', f"cp {cfg.data_dir}/ledger.jsonl /tmp/backup.jsonl",
+                f"python3 -c \"print(open('{cfg.data_dir}/ledger.jsonl').read()[:200])\""]:
+        assert _check(cfg, cmd) is None, cmd
+
+
+def test_guard_catches_stdin_sql_heredocs_inplace_and_cd(cfg):
+    d = cfg.data_dir
+    for cmd in [f"python3 - <<'PY'\nimport sqlite3\nsqlite3.connect('{d}/index.db').execute('delete from entries')\nPY",
+                f"echo 'delete from entries;' | sqlite3 {d}/index.db", f"sqlite3 {d}/index.db < /tmp/x.sql",
+                f"gawk -i inplace '!/D-0001/' {d}/ledger.jsonl", f"find {d} -name '*.db' -delete",
+                f"cd {d} && sqlite3 index.db 'update entries set status=1'", f"cd {d.parent} && rm -rf epistemic",
+                f"rm -rf {d.parent}", f"cp /tmp/forged.jsonl {d}/ledger.jsonl"]:
+        assert _check(cfg, cmd), cmd
+
+
+def test_guard_fails_closed_on_an_unresolvable_path(cfg, store, monkeypatch):
+    _offline(monkeypatch, dm=FakeDM(default=0.05))
+    store.close()
+    out = _run("pre_tool_use", {"tool_name": "Write", "tool_use_id": "w", "tool_input": {
+        "file_path": str(cfg.data_dir / "ledger.jsonl") + "\x00", "content": ""}}, cfg)
+    assert _decision(out) == "deny"
+
+
+def test_guard_runs_even_when_gate_tools_are_narrowed(cfg, store, monkeypatch):
+    _offline(monkeypatch)
+    store.close()
+    monkeypatch.setenv("EPISTEMIC_GATE_TOOLS", '["Edit"]')
+    assert _decision(_bash(cfg, f"rm {cfg.index_path}")) == "deny"

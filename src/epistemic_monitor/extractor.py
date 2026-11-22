@@ -383,6 +383,11 @@ class Extractor:
                                                      "type": etype, "invented": invented, "session_id": session_id})
                     if demoted:
                         source = "agent"
+            if source == "user" and evidence_check is not True and not demoted and is_permissive(statement):
+                # a grant needs the user's words: a quote too short to check ("ok"), or no user turn at all, is not them
+                demoted, unverified, source = True, True, "agent"
+                self.store.log_intervention({"kind": "permissive_claim_demoted", "statement": statement[:160],
+                                             "type": etype, "invented": None, "session_id": session_id})
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
             scope = Scope(paths=[str(p) for p in scope_raw.get("paths", []) if p][:10],
                           tools=[str(t) for t in scope_raw.get("tools", []) if t][:6],

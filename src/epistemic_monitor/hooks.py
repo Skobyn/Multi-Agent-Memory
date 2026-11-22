@@ -524,10 +524,13 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
 def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     sid = _session(payload)
     tool = str(payload.get("tool_name") or "")
-    if tool not in cfg.get("gate", "tools", []):
-        return None
-    if cfg.get("gate", "data_dir_guard", True):
-        guard = data_guard.check(tool, payload.get("tool_input"), cfg.data_dir, payload.get("cwd"))
+    guard_note = ""
+    if cfg.get("gate", "data_dir_guard", True) and tool in (*data_guard.EDIT_TOOLS, "Bash"):
+        # ahead of the gate.tools filter: narrowing which tools the gate scores must not switch this off
+        try:
+            guard = data_guard.check(tool, payload.get("tool_input"), cfg.data_dir, payload.get("cwd"))
+        except Exception as e:  # noqa: BLE001 - fails closed, like the authority check
+            guard = f"Epistemic monitor: the ledger data guard failed ({type(e).__name__}); not running this call."
         if guard:
             enforce = bool(cfg.get("gate", "enforce", True))
             if payload.get("agent_id") and enforce:
@@ -537,7 +540,11 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
                                     "agent_id": payload.get("agent_id"), "tool": tool,
                                     "target": str(ti.get("command") or ti.get("file_path") or ti.get("notebook_path") or "")[:300],
                                     "enforce": enforce, "decision": "deny" if enforce else "advisory"})
-            return hooklib.deny("pre_tool_use", guard) if enforce else hooklib.additional_context("pre_tool_use", guard)
+            if enforce:
+                return hooklib.deny("pre_tool_use", guard)
+            guard_note = guard  # advisory: the call still goes through the authority check and the gate
+    if tool not in cfg.get("gate", "tools", []):
+        return hooklib.additional_context("pre_tool_use", guard_note) if guard_note else None
     if tool == "Bash" and cfg.get("gate", "authority_check", True):
         ti = payload.get("tool_input")
         command = str(ti.get("command") or "") if isinstance(ti, dict) else ""
@@ -601,6 +608,10 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
                             "agent_id": payload.get("agent_id"),
                             "enforce": bool(cfg.get("gate", "enforce", True)),
                             "shadow_decision": "deny" if result.conflicts else "allow", **result.to_dict()})
+    if guard_note:
+        ctx = ((output or {}).get("hookSpecificOutput") or {}).get("additionalContext")
+        if output is None or ctx is not None:
+            output = hooklib.additional_context("pre_tool_use", "\n".join(x for x in (guard_note, ctx) if x))
     return output
 
 

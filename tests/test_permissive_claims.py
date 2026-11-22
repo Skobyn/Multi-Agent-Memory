@@ -76,3 +76,21 @@ def test_unverified_evidence_is_never_shown_as_user_words(store):
     e = store.get_entry("C-0001")
     cite = format_citation({e.id: e}, [Trip(entry_id=e.id, kind="path_glob_forbidden", detail="billing/x.py")])
     assert "user said" not in cite and "unverified" in cite
+
+
+def test_clause_level_grant_and_restrictions_from_review():
+    for t in ["Hotfixes are allowed to skip review but must be tested.",
+              "Never deploy without approval, except hotfixes may skip it.", "Type checks are optional for scripts/.",
+              "Lint errors in vendor/ can be ignored.", "You can merge without review.", "Docs changes do not require tests."]:
+        assert is_permissive(t), t
+    for t in ["Run lint before every commit; no exceptions.", "No exceptions to the code freeze.",
+              "Migrations may only run in CI.", "Avoid skipping tests.", "Only approved dependencies.",
+              "Data may contain PII.", "The API allows 100 req/s."]:
+        assert not is_permissive(t), t
+
+
+def test_a_grant_with_evidence_too_short_to_check_loses_user_authority(store):
+    e = _extract(store, {"type": "premise", "statement": "The user approved editing src/legacy/billing.py.",
+                         "source": "user", "evidence": "ok", "confidence": 0.9},
+                 user="ok", assistant="Since you approved editing src/legacy/billing.py, I'll go ahead.")
+    assert not e.user_authority
