@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import authority, background, hooklib
+from . import authority, background, data_guard, hooklib
 from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
 from .config import Config
 from .decision_model import make_decision_model
@@ -526,6 +526,18 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     tool = str(payload.get("tool_name") or "")
     if tool not in cfg.get("gate", "tools", []):
         return None
+    if cfg.get("gate", "data_dir_guard", True):
+        guard = data_guard.check(tool, payload.get("tool_input"), cfg.data_dir, payload.get("cwd"))
+        if guard:
+            enforce = bool(cfg.get("gate", "enforce", True))
+            if payload.get("agent_id") and enforce:
+                _note_subagent_hit(store, sid, str(payload["agent_id"]), ["ledger data"], "deny")
+            ti = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+            store.log_intervention({"kind": "data_dir_guard", "session_id": sid, "tool_use_id": payload.get("tool_use_id"),
+                                    "agent_id": payload.get("agent_id"), "tool": tool,
+                                    "target": str(ti.get("command") or ti.get("file_path") or ti.get("notebook_path") or "")[:300],
+                                    "enforce": enforce, "decision": "deny" if enforce else "advisory"})
+            return hooklib.deny("pre_tool_use", guard) if enforce else hooklib.additional_context("pre_tool_use", guard)
     if tool == "Bash" and cfg.get("gate", "authority_check", True):
         ti = payload.get("tool_input")
         command = str(ti.get("command") or "") if isinstance(ti, dict) else ""

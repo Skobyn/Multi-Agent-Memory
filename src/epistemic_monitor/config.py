@@ -69,6 +69,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "advisor_slice_turns": 12,
         "history_max": 60,
         "authority_check": True,              # deny Bash ledger ops with user authority the user's turn did not ask for
+        "data_dir_guard": True,               # deny agent writes to the plugin's own ledger/index files (data_guard.py)
     },
     # Premise drift (MemTrace-style validity check): off by default; agent/summary premises only.
     "drift": {"enabled": False, "time_budget_s": 0.2, "max_paths": 10},

@@ -33,6 +33,25 @@ def has_negation(text: str) -> bool:
     return bool(_NEGATION_RE.search(text))
 
 
+_PERMIT_RE = re.compile(
+    r"\b(?:allowed|permitted|permission|approved?|authori[sz]ed|exempt(?:ed|ion)?|exceptions?|waived?|bypass(?:ed|ing)?|"
+    r"ok(?:ay)? to|fine to|free to|safe to|may|can skip|no need|not (?:required|necessary|needed)|"
+    r"(?:do|does)(?:n['’]?t| not) (?:need|have) to|skip(?:s|ped|ping)?)\b", re.IGNORECASE)
+_PROHIBIT_RE = re.compile(
+    r"\b(?:never|must not|mustn['’]?t|shall not|cannot|can['’]?t|may not|forbidden|prohibited|not (?:allowed|permitted|"
+    r"approved|authori[sz]ed)|requires?|must|always)\b|\b(?:do not|don['’]?t)\b(?! (?:need|have) to)", re.IGNORECASE)
+
+
+def is_permissive(text: str) -> bool:
+    """Does the statement grant a permission, exception or approval ("skipping tests for docs/ is allowed", "the
+    user approved force-pushing", "no need to run lint") rather than restrict? Restrictive wording wins ("never skip
+    tests", "requires approval"). Crude on purpose: it is consulted only for a claimed user entry whose quote was not
+    found in the user's turns, where a false hit costs that entry its user authority (Weighing the Envelope, arXiv
+    2611.23844: memory wording that grants authorization erodes a verification rule in proportion to its dose)."""
+    t = text or ""
+    return bool(_PERMIT_RE.search(t)) and not _PROHIBIT_RE.search(t)
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 

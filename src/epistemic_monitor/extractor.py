@@ -18,7 +18,7 @@ from typing import Any
 
 from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
-from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
+from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, is_permissive, now_iso
 from .store import LedgerStore
 from .transcript import KIND_ASSISTANT_TEXT, KIND_TOOL_USE, KIND_USER_TEXT, Turn, looks_injected, split_own_words
 
@@ -373,6 +373,14 @@ class Extractor:
                     unverified = True
                     invented = not (assistant_texts and evidence_supported(str(c.get("evidence", "")), assistant_texts))
                     demoted = etype not in ("constraint", "process") and invented
+                    # ...but "a spurious constraint only restricts the agent" fails for one that grants: "skipping
+                    # tests is allowed" kept user authority and the hard pin tier. And an assistant's report of a past
+                    # grant ("since you approved X") is not a proposal the user confirmed. Only the user's own words
+                    # can grant (Weighing the Envelope, 2611.23844).
+                    if not demoted and is_permissive(statement):
+                        demoted = True
+                        self.store.log_intervention({"kind": "permissive_claim_demoted", "statement": statement[:160],
+                                                     "type": etype, "invented": invented, "session_id": session_id})
                     if demoted:
                         source = "agent"
             scope_raw = c.get("scope") if isinstance(c.get("scope"), dict) else {}
