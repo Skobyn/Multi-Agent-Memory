@@ -18,6 +18,10 @@ from .config import Config
 from .schema import Entry, TYPE_PREFIX, has_negation, now_iso
 
 
+# fields of a user-authority entry the plugin itself updates (``resolve(keep=True)``, drift rebaseline, embeddings)
+_USER_ENTRY_UPDATABLE = frozenset({"status", "depends_on", "last_verified", "embedding_ref", "scope_fingerprint"})
+
+
 def _pack(vec: list[float]) -> bytes:
     return struct.pack(f"<{len(vec)}f", *vec)
 
@@ -107,8 +111,52 @@ class LedgerStore:
             n += 1
         return n
 
-    def _apply_event(self, ev: dict[str, Any], record: bool = True) -> None:
+    def _weakens_user_entry(self, ev: dict[str, Any]) -> str | None:
+        """The id of a user-authority entry this event would take out of enforcement (a non-active status, or user
+        authority stripped) without ``by="user"``, else None. ``retire``/``resolve``/``supersede`` already refuse that
+        at the API; this also applies on replay, so a line in ledger.jsonl with no ``by`` or an agent ``by``, followed
+        by deleting index.db, cannot retire a user rule (RESEARCH-2026-11-22). A forged ``by: user`` line still
+        replays: the file is the agent's to forge only if it can write it, which ``data_guard`` denies. Closing a
+        user review item for good (retired/superseded) also needs the user; only a return to active is free. Only
+        bookkeeping fields of a user entry may change without the user (``_USER_ENTRY_UPDATABLE``)."""
         kind = ev.get("event")
+        if kind not in ("status", "entry_update", "entry_add", "supersede") or ev.get("by") == "user":
+            return None
+        eid = {"entry_add": (ev.get("entry") or {}).get("id"), "supersede": ev.get("old")}.get(kind, ev.get("id"))
+        old = self.get_entry(str(eid)) if eid else None
+        if old is None or not old.user_authority:
+            return None
+        if kind == "supersede":
+            # store.supersede already refuses this live; a forged line must not do it on replay either
+            return old.id if old.status not in ("superseded", "retired") else None
+        if kind == "entry_add":
+            return old.id  # ids are never reused (next_id): a second add would overwrite the user's entry wholesale
+        if kind == "status":
+            after = old.to_dict() | {"status": ev.get("status")}
+        else:
+            fields = dict(ev.get("fields") or {})
+            if set(fields) - _USER_ENTRY_UPDATABLE:
+                return old.id  # rewriting the statement, falsifiers, scope or provenance of a user entry
+            after = old.to_dict() | fields
+        try:
+            new = Entry.from_dict(after)
+        except Exception:  # noqa: BLE001 - a malformed event must not change a user entry either
+            return old.id
+        if new.status != old.status and new.status != "active" and (old.status == "active"
+                                                                   or new.status in ("retired", "superseded")):
+            return old.id  # out of enforcement, or a review item closed for good; only back to active is free
+        if not new.user_authority:
+            return old.id
+        return None
+
+    def _apply_event(self, ev: dict[str, Any], record: bool = True) -> bool:
+        """Apply (and, with ``record``, append) one event. False when the user-entry rule refused it."""
+        kind = ev.get("event")
+        weakened = self._weakens_user_entry(ev)
+        if weakened:
+            self.log_intervention({"kind": "user_entry_write_refused", "entry": weakened, "event": kind,
+                                   "replay": not record, "session_id": ev.get("session_id", "")})
+            return False
         if record:
             self._append_event(ev)
             self.dirty = True  # ledger changed in this process: pinned.md and the MEMORY.md mirror are stale
@@ -117,7 +165,7 @@ class LedgerStore:
         elif kind == "entry_update":
             e = self.get_entry(ev["id"])
             if e is None:
-                return
+                return True
             d = e.to_dict()
             d.update(ev.get("fields", {}))
             self._upsert(Entry.from_dict(d))
@@ -170,6 +218,7 @@ class LedgerStore:
                 if ev["status"] == "retired":
                     d["revoked_by"] = ev.get("by")
                 self._upsert(Entry.from_dict(d))
+        return True
 
     # ------------------------------------------------------------------ entries
     def _upsert(self, entry: Entry, embedding: list[float] | None = None) -> None:
@@ -198,7 +247,8 @@ class LedgerStore:
         problems = entry.validate()
         if problems:
             raise ValueError("; ".join(problems))
-        self._apply_event({"event": "entry_add", "entry": entry.to_dict()})
+        if not self._apply_event({"event": "entry_add", "entry": entry.to_dict()}):
+            raise ValueError(f"{entry.id} is a user entry; it cannot be replaced")
         if embedding:
             self._upsert(entry, embedding)
         return entry
