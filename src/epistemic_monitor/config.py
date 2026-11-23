@@ -51,6 +51,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "false_deny_alpha": 0.05,
         "cooldown_steps": 5,
         "max_consecutive_denies": 5,
+        "user_escalation_denies": 3,          # denies past the cap on a user entry, each saying "stop and ask the user"
         "authorization_shaped_to_advisor": True,
         "tools": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
         "candidates_max": 6,

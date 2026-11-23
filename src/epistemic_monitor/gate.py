@@ -274,6 +274,16 @@ def run_tier0(entries: list[Entry], tool: str, tool_input: dict[str, Any], cwd: 
     return result
 
 
+USER_ESCALATIONS = "user_escalations"  # session state: escalated denies per user entry since the user's last prompt
+
+
+def reset_deny_counters(store, session_id: str) -> None:
+    """A genuine user prompt: the user has seen the denies and can answer them, so per-entry counts start over. The
+    session budget for agent-only conflicts is not reset."""
+    store.set_state(session_id, "entry_denies", {})
+    store.set_state(session_id, USER_ESCALATIONS, {})
+
+
 def format_citation(entries_by_id: dict[str, Entry], trips: list[Trip], next_step: str = "") -> str:
     lines = ["Epistemic monitor: this change conflicts with recorded decisions."]
     for t in trips:
@@ -604,10 +614,43 @@ class GatePipeline:
         user_backed = any(by_id[e].user_authority for e in conflicts if e in by_id)
         tripped = {t.entry_id for t in res.trips}
         hard = user_backed or bool(tripped & conflicts)
+        # Persistence must not wear a user rule down (arXiv 2611.19911: agents push through a documented constraint
+        # when oversight goes quiet). The session deny budget counts only conflicts with no user-authority entry, so
+        # agent trips and subagents cannot spend it for the user. A user entry at the per-entry cap is not released:
+        # the deny escalates to "stop and ask the user", at most ``user_escalation_denies`` more times until the
+        # user's next own prompt, which resets the per-entry counters. That bound keeps a false positive in a
+        # headless run (no user to supersede) from looping forever.
         denies = int(self.store.get_state(session_id, "denies", 0) or 0)
         budget = int(self.g.get("deny_budget", 5))
         per_entry = dict(self.store.get_state(session_id, "entry_denies", {}) or {})
         cap = int(self.g.get("max_consecutive_denies", 5))
+        user_ids = [e for e in conflicts if e in by_id and by_id[e].user_authority]
+        if enforce and user_backed:
+            esc = dict(self.store.get_state(session_id, USER_ESCALATIONS, {}) or {})
+            esc_max = int(self.g.get("user_escalation_denies", 3))
+            capped = [e for e in user_ids if int(per_entry.get(e, 0)) >= cap]
+            exhausted = [e for e in capped if int(esc.get(e, 0)) >= esc_max]
+            if set(user_ids) <= set(exhausted):
+                res.decision = "advisory"
+                res.notes.append(f"escalation_exhausted for {exhausted}; allowing with citation until the user's next prompt")
+                return res
+            # one worn-down rule must not carry a fresh rule's violation through: deny on the rest
+            capped = [e for e in capped if e not in exhausted]
+            res.decision = "deny"
+            for e in conflicts:
+                per_entry[e] = int(per_entry.get(e, 0)) + 1
+            self.store.set_state(session_id, "entry_denies", per_entry)
+            if capped:
+                for e in capped:
+                    esc[e] = int(esc.get(e, 0)) + 1
+                self.store.set_state(session_id, USER_ESCALATIONS, esc)
+                n = max(int(per_entry.get(e, 0)) for e in capped)
+                ids = ", ".join(capped)
+                res.reason += (f"\nThis change has now been denied {n} times on {ids}, a rule the user set. Do not look "
+                               f"for another way to make it. End your turn and ask the user whether to supersede "
+                               f"{ids}, or tell them what blocks the task.")
+                res.notes.append(f"escalated for {capped}")
+            return res
         capped = [e for e in conflicts if int(per_entry.get(e, 0)) >= cap]
         if enforce and hard and denies < budget and not capped:
             res.decision = "deny"
@@ -619,7 +662,7 @@ class GatePipeline:
             res.decision = "advisory"
             if capped:
                 res.notes.append(f"cap_reached for {capped}; allowing with citation")
-            if denies >= budget:
+            if hard and denies >= budget:
                 res.notes.append("deny budget exhausted for this session; advisory only")
             if not enforce:
                 res.notes.append("enforcement off")

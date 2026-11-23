@@ -98,17 +98,20 @@ def test_provenance_force_and_budget_and_cap(cfg, store):
     # a tripped falsifier is "hard" even with agent provenance
     res = pipe.evaluate("Edit", _edit("forbidden thing", "src/x/a.py"), "s1")
     assert res.decision == "deny"
-    # consecutive-deny cap: after 5 denies on the same entry the gate lets it through with a citation
-    for _ in range(5):
-        res = pipe.evaluate("Edit", _edit("import pymongo", "src/y/a.py"), "s2")
+    # consecutive-deny cap on an agent entry: after 5 denies it is let through with a citation
+    for i in range(4):
+        res = pipe.evaluate("Edit", _edit("forbidden thing", "src/x/a.py"), "s1")
         assert res.decision == "deny"
-    res = pipe.evaluate("Edit", _edit("import pymongo", "src/y/a.py"), "s2")
+    res = pipe.evaluate("Edit", _edit("forbidden thing", "src/x/a.py"), "s1")
     assert res.decision == "advisory" and any("cap_reached" in n for n in res.notes)
-    # session deny budget (5) exhausted -> advisory
+    # session deny budget (5) exhausted by agent-only conflicts -> advisory for agent entries
     for i in range(5):
-        pipe.evaluate("Edit", _edit("import pymongo", f"src/y/{i}.py"), "s3")
-    res = pipe.evaluate("Edit", _edit("import pymongo", "src/y/z.py"), "s3")
+        pipe.evaluate("Edit", _edit("forbidden thing", f"src/x/{i}.py"), "s3")
+    res = pipe.evaluate("Edit", _edit("forbidden thing", "src/x/z.py"), "s3")
     assert res.decision == "advisory" and any("budget" in n for n in res.notes)
+    # ... but the user's rule was never spent: its first violation still denies (2611.19911)
+    res = pipe.evaluate("Edit", _edit("import pymongo", "src/y/a.py"), "s3")
+    assert res.decision == "deny"
 
 
 def test_structural_signals_and_first_write(cfg, store):

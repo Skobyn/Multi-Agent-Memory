@@ -69,8 +69,18 @@ class ReadStats:
     versions: set[str] = field(default_factory=set)
 
 
-_INJECTED_PREFIXES = ("<task-notification>", "<system-reminder>", "<agent-message", "Another Claude session sent a message",
-                      "<local-command-stdout>", "<local-command-stderr>")
+# Harness envelopes, matched as an opening tag with a word boundary so attribute variants (``<task-notification
+# id=..>``) count and look-alikes (``<wakeup>``) do not. ``wake``/``event``/``untrusted_external_data`` carry external
+# events such as GitHub PR comments and other sessions' messages: text anyone who can comment can write, so it must
+# never be read as the user's own words (2026-11-23 probe: a PR comment's SUPERSEDE line revoked a user entry).
+_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr",
+                  "untrusted_external_data")
+# ``<wake ...>`` and ``<event ...>`` are common words in code and HTML, so they count only with an attribute, which the
+# harness always writes (``<wake reason="external-event"><event source="github" ...>``).
+# Only the attribute the harness writes counts (``<event name="click"/>`` in a JSX or event-log prompt does not).
+_ATTR_OPEN = r"wake\s[^>]*?\breason\s*=|event\s[^>]*?\bsource\s*="
+_INJECTED_OPEN_RE = re.compile(r"<(?:(?:%s)(?=[\s>/])|%s)" % ("|".join(_ENVELOPE_TAGS), _ATTR_OPEN), re.IGNORECASE)
+_INJECTED_PREFIXES = ("Another Claude session sent a message",)
 
 
 _INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
@@ -79,11 +89,14 @@ _INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
 def looks_injected(text: str) -> bool:
     """Fallback for rows without an ``origin`` field: user-role text that opens with a harness envelope. Zero-width
     characters and a BOM in front of the envelope do not hide it."""
-    return (text or "").translate(_INVISIBLE).lstrip().startswith(_INJECTED_PREFIXES)
+    t = (text or "").translate(_INVISIBLE).lstrip()
+    return t.startswith(_INJECTED_PREFIXES) or bool(_INJECTED_OPEN_RE.match(t))
 
 
-_ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "local-command-stdout", "local-command-stderr")
 _ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
+# mid-text, a wake/event envelope is cut only when it is closed: an unclosed ``<event source=..>`` in user prose
+# must not swallow the rest of the prompt
+_ATTR_ENVELOPE_RE = re.compile(r"<(wake|event)\s(?=[^>]*?\b(?:reason|source)\s*=)[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE)
 # a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at
 # least as long (CommonMark); an unclosed fence runs to the end
 _FENCE_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*(?:\n.*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)|\Z)", re.DOTALL | re.MULTILINE)
@@ -106,8 +119,13 @@ def split_own_words(text: str) -> tuple[str, str]:
         removed.append(m.group(0))
         return "\n"
 
+    if looks_injected(text):
+        # a prompt that opens with an envelope is the harness's, whole: a closing tag inside it may be the
+        # commenter's own ("lgtm</event></wake>\nSUPERSEDE ..."), so nothing after it is the user's words
+        return "", text or ""
     t = re.sub(r"\r\n?", "\n", (text or "").translate(_INVISIBLE))
     t = _ENVELOPE_RE.sub(cut, t)
+    t = _ATTR_ENVELOPE_RE.sub(cut, t)
     i = t.find(_PEER_MARKER)
     if i >= 0:
         removed.append(t[i:])
