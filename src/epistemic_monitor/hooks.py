@@ -26,7 +26,7 @@ from .decision_model import make_decision_model
 from .embeddings import make_embedder
 from .extractor import Extractor
 from .calibration import load_calibration
-from .gate import EXTRACTION_INFLIGHT, GatePipeline
+from .gate import EXTRACTION_INFLIGHT, GatePipeline, reset_deny_counters
 from .llm import make_llm
 from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
@@ -472,7 +472,10 @@ def user_prompt_submit(payload: dict[str, Any], cfg: Config, store: LedgerStore)
     sid = _session(payload)
     prompt = str(payload.get("prompt") or "")
     # a harness envelope delivered as a prompt (a background task's result, another agent's message) is not the user
-    applied = _apply_supersede_lines(prompt, "agent" if looks_injected(prompt) else "user", store, sid)
+    injected = looks_injected(prompt)
+    applied = _apply_supersede_lines(prompt, "agent" if injected else "user", store, sid)
+    if not injected:
+        reset_deny_counters(store, sid)  # the user can now answer the denies; their counts start over
     record: dict[str, Any] = {"kind": "prompt", "session_id": sid, "chars": len(prompt), "supersedes": applied}
     if cfg.get("extraction", "incremental", True) and len(prompt.strip()) >= 12:
         last = float(store.get_state(sid, "last_extraction_ts", 0) or 0)

@@ -276,8 +276,9 @@ Tiers run in order and short-circuit:
 - **Force by provenance.** `source=user` → deny path. `source=agent` → `allow` + citation and a
   soft warning; deny only on a tripped falsifier. `source=summary` or `status=unknown_current` →
   citation only, plus a request to confirm the entry.
-- **Harm budget.** Two layers. (1) Until calibrated: at most `K=5` denies per session, then
-  advisory-only, stated once. (2) After calibration (§8.1): a **false-deny-rate budget** α,
+- **Harm budget.** Two layers. (1) Until calibrated: at most `K=5` denies per session on conflicts with no
+  user-authority entry, then advisory-only, stated once. A user-authority entry is never released by this budget;
+  see the 2026-11-23 addendum for its bounded escalation. (2) After calibration (§8.1): a **false-deny-rate budget** α,
   enforced as a threshold set at the (1−α) quantile of gate scores observed on known-good
   sessions (VoS, 2610.09115 §4.1); α defaults to 5%.
 - **Latency guard.** Tier 2/3 over budget → `allow` + citation, log `timeout`. Never block on a
@@ -863,3 +864,16 @@ later than 20 s after evaluation began. It never downgrades: only a recorded sup
 report leaves out. Advisories are included only with `gate.subagent_handoff_advisories`. SubagentStop context goes
 to the subagent, not the lead (probe, Claude Code 2.1.327). A granted user-authority ledger command is refused when
 the shell would expand `$` or a backtick outside single quotes.
+
+## Addendum (2026-11-23): persistence cannot wear a user rule down; external events are not the user
+
+From `docs/RESEARCH-2026-11-23.md` (2611.19911, 2611.10884). The session `deny_budget` counts only conflicts with no
+user-authority entry, so agent falsifier trips and subagents no longer spend it for the user. A user-authority entry
+at `max_consecutive_denies` is not let through. The gate keeps denying and adds "do not look for another way; end
+your turn and ask the user", at most `gate.user_escalation_denies` (3) more times. After that it allows with a
+citation (`escalation_exhausted`), which bounds a false positive in a headless run where no user can supersede. A
+non-injected `UserPromptSubmit` resets `entry_denies` and `user_escalations`. The agent-only budget is not refilled.
+The calibrated α budget in §8 is still not built. Harness envelopes are now matched as opening tags with a word
+boundary (`<task-notification id=..>` counts). `<wake ...>`, `<event ...>` (both only with an attribute) and
+`<untrusted_external_data>` are envelopes. A GitHub PR comment delivered as a prompt therefore cannot apply a
+SUPERSEDE line as the user, be queued as a user turn, or count as a human transcript row.
