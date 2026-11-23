@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 import shlex
 
+from .transcript import split_third_party
+
 _ID_RE = re.compile(r"\b([DCPKR])-0*(\d{1,6})\b", re.IGNORECASE)
 _CLI_RE = re.compile(r"em-hook|epistemic_monitor|(?:^|[\s;&|(`'\"/])em\s+ledger\b")
 _LEDGER_RE = re.compile(r"\bledger\b")
@@ -176,6 +178,7 @@ def only_ledger(command: str) -> bool:
 def granted_invocations(user_text: str) -> list[tuple[str, ...]]:
     """Ledger commands the user's own turn spells out: a ``/ledger`` slash command, or a pasted CLI line (one line;
     a line whose quotes do not balance grants nothing)."""
+    user_text = split_third_party(user_text or "")[0]   # an external event's text inside the turn grants nothing
     out = [inv for m in _LEDGER_ARGS_RE.finditer(user_text or "") for inv in invocations("ledger " + m.group(1))]
     for line in (user_text or "").splitlines():
         if _CLI_RE.search(line):
