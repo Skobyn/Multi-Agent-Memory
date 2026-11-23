@@ -77,9 +77,9 @@ _ENVELOPE_TAGS = ("task-notification", "system-reminder", "agent-message", "loca
                   "untrusted_external_data")
 # ``<wake ...>`` and ``<event ...>`` are common words in code and HTML, so they count only with an attribute, which the
 # harness always writes (``<wake reason="external-event"><event source="github" ...>``).
-_ATTR_TAGS = ("wake", "event")
-_INJECTED_OPEN_RE = re.compile(r"<(?:(?:%s)(?=[\s>/])|(?:%s)\s+[\w-]+\s*=)" % ("|".join(_ENVELOPE_TAGS), "|".join(_ATTR_TAGS)),
-                               re.IGNORECASE)
+# Only the attribute the harness writes counts (``<event name="click"/>`` in a JSX or event-log prompt does not).
+_ATTR_OPEN = r"wake\s[^>]*?\breason\s*=|event\s[^>]*?\bsource\s*="
+_INJECTED_OPEN_RE = re.compile(r"<(?:(?:%s)(?=[\s>/])|%s)" % ("|".join(_ENVELOPE_TAGS), _ATTR_OPEN), re.IGNORECASE)
 _INJECTED_PREFIXES = ("Another Claude session sent a message",)
 
 
@@ -94,7 +94,9 @@ def looks_injected(text: str) -> bool:
 
 
 _ENVELOPE_RE = re.compile(r"<(%s)\b[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ENVELOPE_TAGS), re.DOTALL | re.IGNORECASE)
-_ATTR_ENVELOPE_RE = re.compile(r"<(%s)\s+[\w-]+\s*=[^>]*>.*?(?:</\1\s*>|\Z)" % "|".join(_ATTR_TAGS), re.DOTALL | re.IGNORECASE)
+# mid-text, a wake/event envelope is cut only when it is closed: an unclosed ``<event source=..>`` in user prose
+# must not swallow the rest of the prompt
+_ATTR_ENVELOPE_RE = re.compile(r"<(wake|event)\s(?=[^>]*?\b(?:reason|source)\s*=)[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE)
 # a fence opens with 3+ backticks or tildes at a line start and closes on a line holding only the same character, at
 # least as long (CommonMark); an unclosed fence runs to the end
 _FENCE_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*(?:\n.*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)|\Z)", re.DOTALL | re.MULTILINE)
@@ -117,6 +119,10 @@ def split_own_words(text: str) -> tuple[str, str]:
         removed.append(m.group(0))
         return "\n"
 
+    if looks_injected(text):
+        # a prompt that opens with an envelope is the harness's, whole: a closing tag inside it may be the
+        # commenter's own ("lgtm</event></wake>\nSUPERSEDE ..."), so nothing after it is the user's words
+        return "", text or ""
     t = re.sub(r"\r\n?", "\n", (text or "").translate(_INVISIBLE))
     t = _ENVELOPE_RE.sub(cut, t)
     t = _ATTR_ENVELOPE_RE.sub(cut, t)

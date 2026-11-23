@@ -271,8 +271,9 @@ Tiers run in order and short-circuit:
   Jev samples with paraphrased instructions and aggregate by **max** (the aggregation that
   gained +10 pp safety at zero usefulness cost in that paper); min-aggregation is never used.
   Cooldown θc = 5 tool calls between Tier 3 calls on the same entry; after θi = 5 consecutive
-  denies on one entry, let the action through with a citation and log `cap_reached` (LivePlan's
-  caps).
+  denies on one agent entry, let the action through with a citation and log `cap_reached` (LivePlan's
+  caps). A user-authority entry counts denies since the user's last prompt and escalates instead
+  (2026-11-23 addendum).
 - **Force by provenance.** `source=user` → deny path. `source=agent` → `allow` + citation and a
   soft warning; deny only on a tripped falsifier. `source=summary` or `status=unknown_current` →
   citation only, plus a request to confirm the entry.
@@ -646,7 +647,7 @@ environment of the Claude Code process: `TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`,
   "gate": {
     "tau_default": 0.75, "tau_by_type": {"process": 0.6, "commitment": 0.6},
     "deny_budget": 5, "false_deny_alpha": 0.05,
-    "cooldown_steps": 5, "max_consecutive_denies": 5,
+    "cooldown_steps": 5, "max_consecutive_denies": 5, "user_escalation_denies": 3,
     "authorization_shaped_to_advisor": true
   },
   "pinning": {"max_entries": 25, "max_chars": 10000, "mirror_memory_md": true},
@@ -871,9 +872,11 @@ From `docs/RESEARCH-2026-11-23.md` (2611.19911, 2611.10884). The session `deny_b
 user-authority entry, so agent falsifier trips and subagents no longer spend it for the user. A user-authority entry
 at `max_consecutive_denies` is not let through. The gate keeps denying and adds "do not look for another way; end
 your turn and ask the user", at most `gate.user_escalation_denies` (3) more times. After that it allows with a
-citation (`escalation_exhausted`), which bounds a false positive in a headless run where no user can supersede. A
+citation (`escalation_exhausted`), which bounds a false positive in a headless run where no user can supersede.
+It releases only when every user entry in the conflict set is exhausted. A
 non-injected `UserPromptSubmit` resets `entry_denies` and `user_escalations`. The agent-only budget is not refilled.
 The calibrated α budget in §8 is still not built. Harness envelopes are now matched as opening tags with a word
 boundary (`<task-notification id=..>` counts). `<wake ...>`, `<event ...>` (both only with an attribute) and
-`<untrusted_external_data>` are envelopes. A GitHub PR comment delivered as a prompt therefore cannot apply a
+`<untrusted_external_data>` are envelopes. A `<wake>` counts only with `reason=`, an `<event>` only with `source=`,
+and mid-text either is cut only when closed. A prompt that opens with an envelope has no own words at all. A GitHub PR comment delivered as a prompt therefore cannot apply a
 SUPERSEDE line as the user, be queued as a user turn, or count as a human transcript row.

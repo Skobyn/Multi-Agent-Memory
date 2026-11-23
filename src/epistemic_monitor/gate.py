@@ -630,10 +630,12 @@ class GatePipeline:
             esc_max = int(self.g.get("user_escalation_denies", 3))
             capped = [e for e in user_ids if int(per_entry.get(e, 0)) >= cap]
             exhausted = [e for e in capped if int(esc.get(e, 0)) >= esc_max]
-            if exhausted:
+            if set(user_ids) <= set(exhausted):
                 res.decision = "advisory"
                 res.notes.append(f"escalation_exhausted for {exhausted}; allowing with citation until the user's next prompt")
                 return res
+            # one worn-down rule must not carry a fresh rule's violation through: deny on the rest
+            capped = [e for e in capped if e not in exhausted]
             res.decision = "deny"
             for e in conflicts:
                 per_entry[e] = int(per_entry.get(e, 0)) + 1
