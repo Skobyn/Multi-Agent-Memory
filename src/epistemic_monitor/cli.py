@@ -5,7 +5,7 @@
     em ledger list [--all] | show <id> | add ... | supersede <id> ... | pin | interventions [n] | status
     em extract-capture <transcript.jsonl[.gz]> --session <id>
     em extract-pending                 (retry captures whose extraction never finished)
-    em extract-text <file> --session <id> --role user|assistant
+    em extract-text <file> --session <id> [--role assistant]
     em extract-prompts --session <id>   (user prompts a debounced or busy prompt-time run skipped)
 """
 
@@ -389,7 +389,9 @@ def _extract_pending_locked(cfg, pending_dir, budget: float) -> int:  # noqa: AN
 def extract_text(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="em extract-text")
     p.add_argument("path"); p.add_argument("--session", required=True)
-    p.add_argument("--role", choices=("user", "assistant"), default="assistant")
+    # assistant only: a file is never the user's own turn (review, 2026-11-24: `--role user` stored whatever the
+    # caller wrote with user authority). The Stop hook is the only caller.
+    p.add_argument("--role", choices=("assistant",), default="assistant")
     p.add_argument("--budget", type=float, default=60.0)
     args = p.parse_args(argv)
     from .hooks import _extractor_for
@@ -402,7 +404,7 @@ def extract_text(argv: list[str]) -> int:
         store = LedgerStore(cfg)
         try:
             text = Path(args.path).read_text(encoding="utf-8", errors="replace")
-            kind = KIND_USER_TEXT if args.role == "user" else KIND_ASSISTANT_TEXT
+            kind = KIND_ASSISTANT_TEXT
             ex = _extractor_for(cfg, store, args.budget)
             res = ex.run([Turn(uuid="", kind=kind, role=args.role, text=text)], args.session, mode="incremental").to_dict() \
                 if ex else {"skipped": "no extractor"}

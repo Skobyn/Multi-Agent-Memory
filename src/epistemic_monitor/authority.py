@@ -14,6 +14,8 @@ deliberately exact (the agent's ledger arguments must equal the user's after nor
 
 ``em-hook hook user_prompt_submit`` run from Bash is always refused: that handler applies ``SUPERSEDE`` lines with
 user authority to whatever payload arrives on stdin, so a forged payload was a second path to the same power.
+So is every other ``hook`` handler and the ``extract-capture``, ``extract-pending`` and ``extract-text``
+subcommands, which read a caller-named transcript or file as the user's own turns (review, 2026-11-24).
 
 This stops a confused or steered agent on the normal CLI path. It is not sound against an agent determined to
 bypass it (shell variables, ``xargs``, ``python3 -c`` with the store, or writing ledger.jsonl): nothing in-process is.
@@ -26,11 +28,18 @@ import shlex
 from .transcript import split_third_party
 
 _ID_RE = re.compile(r"\b([DCPKR])-0*(\d{1,6})\b", re.IGNORECASE)
-_CLI_RE = re.compile(r"em-hook|epistemic_monitor|(?:^|[\s;&|(`'\"/])em\s+ledger\b")
+_CLI_RE = re.compile(r"em-hook|epistemic_monitor|(?:^|[\s;&|(`'\"/])em\s+(?:ledger|hook|extract-)")
 _LEDGER_RE = re.compile(r"\bledger\b")
 # confirm; --user and its argparse abbreviations (--u, --us, --use); --by user / --by=user and abbreviations (--b)
 _MARKER_RE = re.compile(r"\bconfirm\b|--u(?:s(?:er?)?)?(?![\w-])|--by?(?:=|\s+)['\"]?user\b", re.IGNORECASE)
 _HOOK_UPS_RE = re.compile(r"\bhook\b.*user[_-]prompt[_-]submit", re.IGNORECASE | re.DOTALL)
+# CLI subcommands that read caller-named input as the user's words or a session transcript: a hook handler fed a
+# forged payload (pre_compact and session_end extract from whatever transcript_path it names), extract-text, which
+# turned a file into a user turn, and the capture extractors, which read any JSONL as a transcript. Claude Code and
+# the plugin's own background workers run these; the agent never needs to (review, 2026-11-24).
+_CLI_INTERNAL_RE = re.compile(
+    r"(?:em-hook|epistemic_monitor[\w.]*|(?<![\w-])em)['\"]?(?:\s+-{1,2}[\w=.-]+)*\s+['\"]?"
+    r"(hook|extract-capture|extract-pending|extract-text)(?![\w-])", re.IGNORECASE)
 _LEDGER_ARGS_RE = re.compile(r"<command-name>/?(?:[\w.-]+:)?ledger</command-name>\s*<command-args>(.*?)</command-args>",
                              re.DOTALL)
 # a redirection token: `2>&1`, `>`, `>>`, `<`, `>out.txt`
@@ -195,6 +204,12 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     if _HOOK_UPS_RE.search(command):
         return ("Epistemic monitor: running the user_prompt_submit hook by hand would apply SUPERSEDE lines with the "
                 "user's authority. Claude Code runs hooks itself; do not run it from Bash."), []
+    m = _CLI_INTERNAL_RE.search(command)
+    if m:
+        return (f"Epistemic monitor: `{m.group(1)}` is run by Claude Code and the monitor's own background workers. "
+                "Run from Bash it reads whatever file or payload it is given as the user's words or a session "
+                "transcript, so it could record decisions with the user's authority. Do not run it; if the user "
+                "wants it, they can run it in their own terminal."), []
     if not (_LEDGER_RE.search(command) and _MARKER_RE.search(command)):
         return None, []
     used = used or set()

@@ -190,7 +190,8 @@ def rows_to_turns(row: dict) -> list[Turn]:
         session_id=str(row.get("sessionId", "")),
         version=str(row.get("version", "")),
         raw_type=rtype,
-        is_sidechain=bool(row.get("isSidechain", False)),
+        # a row that names a subagent is the subagent's, even without the flag: its "user" row is the lead's prompt
+        is_sidechain=bool(row.get("isSidechain", False) or row.get("agentId")),
         is_meta=bool(row.get("isMeta", False)),
         is_injected=injected_origin(row),
     )
