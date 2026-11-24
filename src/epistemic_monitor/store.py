@@ -252,6 +252,8 @@ class LedgerStore:
     def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "") -> bool:
         """Apply the authority rule (DESIGN §3): a user-provenance entry can only be
         superseded with ``by="user"``. Returns False when refused."""
+        from .redact import redact
+        reason = redact(reason)   # the reason is stored and shown; a credential typed in it is not (redact.py)
         old = self.get_entry(old_id)
         if old is None:
             return False

@@ -152,7 +152,9 @@ def ledger(argv: list[str]) -> int:
             print(_fmt_entry(e, verbose=True) if e else f"no entry {args.id}")
         elif args.cmd == "add":
             source = "user" if args.user else "agent"
-            e = Entry(id=store.next_id(args.type), type=args.type, statement=args.statement, rationale=args.rationale,
+            from .redact import redact
+            e = Entry(id=store.next_id(args.type), type=args.type, statement=redact(args.statement),
+                      rationale=redact(args.rationale or ""),
                       scope=Scope(paths=args.path),
                       provenance=Provenance(source=source, confirmed_by_user=args.user, session_id="cli", extraction_confidence=1.0))
             from .anchors import extract_anchors

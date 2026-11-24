@@ -19,7 +19,7 @@ _STOP = {
     "The", "This", "That", "These", "Those", "When", "Where", "What", "Which", "While", "With", "Without", "Then",
     "There", "Here", "They", "Their", "From", "Into", "Only", "Also", "Never", "Always", "Keep", "Make", "Must",
     "Should", "Would", "Could", "Before", "After", "Every", "Each", "Some", "Such", "Than", "Because", "Please",
-    "Yes", "Not", "Use", "Using", "Decision", "Constraint", "User", "Agent", "Session", "Turn", "Note", "Prefer",
+    "Yes", "Not", "Use", "Using", "REDACTED", "Decision", "Constraint", "User", "Agent", "Session", "Turn", "Note", "Prefer",
     "Avoid", "Ensure", "Don", "Does", "Have", "Will", "Need", "Want", "Project", "Code", "File", "Files", "Tests",
     "Test", "Run", "Add", "Remove", "Change", "Changes", "Primary", "Default", "Instead", "Still", "Just", "Until",
 }

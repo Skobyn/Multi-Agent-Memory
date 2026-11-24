@@ -16,6 +16,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
+from .redact import redact
 from .anchors import extract_anchors
 from .llm import LLMClient, LLMError
 from .schema import ENTRY_TYPES, FALSIFIER_KINDS, Entry, Provenance, Scope, has_negation, now_iso
@@ -327,7 +328,8 @@ class Extractor:
                 result.rejected += 1
                 continue
             etype = str(c.get("type", "")).strip().lower()
-            statement = one_line(c.get("statement", ""))  # one line: statements are re-rendered into prompts and the pin block
+            # one line: statements are re-rendered into prompts and the pin block; credentials never stored (redact.py)
+            statement = redact(one_line(c.get("statement", "")))
             try:
                 conf = float(c.get("confidence", 0.7))
             except (TypeError, ValueError):
@@ -344,7 +346,7 @@ class Extractor:
                     # `ledger feedback` lists these as candidates for `ledger confirm <id>`.
                     self.store.log_intervention({
                         "kind": "dedup_discarded_user_claim", "entry": existing.id, "session_id": session_id,
-                        "evidence": str(c.get("evidence", ""))[:200],
+                        "evidence": redact(str(c.get("evidence", "")))[:200],
                         "evidence_supported": evidence_supported(str(c.get("evidence", "")), user_texts or [])})
                 result.skipped_duplicates += 1
                 continue
@@ -406,8 +408,9 @@ class Extractor:
                     self.store.log_intervention({"kind": "broad_falsifier_dropped", "statement": statement[:120],
                                                  "dropped": len(falsifiers) - len(kept), "session_id": session_id})
                 falsifiers = kept
-            evidence = str(c.get("evidence", ""))[:500]
-            rationale = one_line(c.get("rationale", ""))[:500]
+            # the checks above read the raw quote; what is stored, logged and re-shown is redacted
+            evidence = redact(str(c.get("evidence", "")))[:500]
+            rationale = redact(one_line(c.get("rationale", "")))[:500]
             entry = Entry(
                 id=self.store.next_id(etype), type=etype, statement=statement[:500], rationale=rationale,
                 scope=scope, falsifiers=falsifiers,
@@ -461,7 +464,7 @@ class Extractor:
             if demote:
                 by = "agent"  # claimed user words that match nothing the user wrote as their own: no user authority
                 self.store.log_intervention({"kind": "supersede_evidence_unverified", "old": s["old"],
-                                             "session_id": session_id, "evidence": str(s.get("evidence", ""))[:200]})
+                                             "session_id": session_id, "evidence": redact(str(s.get("evidence", "")))[:200]})
             ok = self.store.supersede(s["old"].strip().upper(), None, str(s.get("reason", ""))[:300], by=by, session_id=session_id)
             result.superseded.append({"old": s["old"], "by": by, "ok": ok})
 
