@@ -21,6 +21,7 @@ from typing import Any
 
 from . import authority, background, hooklib, selfguard
 from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stale_resurrected_candidates
+from .redact import redact
 from .config import Config
 from .decision_model import make_decision_model
 from .embeddings import make_embedder
@@ -61,7 +62,7 @@ def _apply_supersede_lines(text: str, by: str, store: LedgerStore, session_id: s
         ok = store.supersede(m.group(1).upper(), None, m.group(2).strip(), by=by, session_id=session_id)
         applied.append({"entry": m.group(1).upper(), "by": by, "ok": ok})
         store.log_intervention({"kind": "supersede", "entry": m.group(1).upper(), "by": by, "ok": ok,
-                                "reason": m.group(2).strip(), "session_id": session_id})
+                                "reason": redact(m.group(2).strip()), "session_id": session_id})
     return applied
 
 

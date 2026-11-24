@@ -77,3 +77,43 @@ def test_supersede_reason_is_redacted(store):
     make_entry(store, source="agent", confirmed=False)
     assert store.supersede("D-0001", None, f"rotated to {KEY}", by="agent")
     assert KEY not in store.iter_events()[-1]["reason"]
+
+
+ENV = ["DB_PASSWORD=" + "abc12345678", "AWS_SECRET_ACCESS_KEY=" + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+       "SECRET_KEY=" + "django-insecure-abc123", "api_key = '" + "x9y8z7w6v5u4" + "'",
+       'password="' + "hunter2hunter" + '"', "Authorization: Bearer " + "abcDEF0123456789ghiJKL",
+       "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc", "glpat-" + "xxxxxxxxxxxxxxxxxxxx1", "hf_" + "a1" * 17]
+
+
+@pytest.mark.parametrize("text", ENV)
+def test_env_style_and_other_common_secrets_are_redacted(text):
+    assert "[REDACTED:" in redact(text)
+
+
+@pytest.mark.parametrize("text", ["pwd=/home/user/project2", "passwd=/etc/passwd2",
+                                  "branch sk-1234-refactor-payment-service-module-v2-final",
+                                  "task-sk-" + "0123456789abcdef" * 2 + ".md",
+                                  "https://a.com/x?redirect=https://b.com:443@c"])
+def test_review_false_positives_are_left_alone(text):
+    assert redact(text) == text
+
+
+def test_bare_private_key_header_keeps_the_rule():
+    text = "Never commit files containing '-----BEGIN RSA " + "PRIVATE KEY-----'; pre-commit scans for it in CI"
+    assert redact(text) == text
+
+
+def test_redaction_stays_linear_on_adversarial_input():
+    import time
+    for s in ["sk-" * 70000, ("my-sk-" + "a" * 10) * 3000, "://" + "a:" * 50000, "password=" + "1" * 200000,
+              "-----BEGIN RSA " + "PRIVATE KEY-----" * 10000]:
+        t = time.monotonic()
+        redact(s)
+        assert time.monotonic() - t < 2.0
+
+
+def test_user_supersede_line_reason_is_logged_redacted(store):
+    from epistemic_monitor.hooks import _apply_supersede_lines
+    make_entry(store)
+    _apply_supersede_lines(f"SUPERSEDE D-0001: rotate to {KEY}", "user", store, "s1")
+    assert KEY not in (store.config.data_dir / "interventions.jsonl").read_text()

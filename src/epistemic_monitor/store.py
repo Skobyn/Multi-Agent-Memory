@@ -211,6 +211,8 @@ class LedgerStore:
 
     def retire(self, entry_id: str, reason: str, by: str = "agent", session_id: str = "") -> bool:
         """Close an entry without a replacement. Authority rule as for supersede: a user-made entry needs by='user'."""
+        from .redact import redact
+        reason = redact(reason)
         e = self.get_entry(entry_id)
         if e is None or e.status == "retired":
             return False

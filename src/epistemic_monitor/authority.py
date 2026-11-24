@@ -38,8 +38,8 @@ _HOOK_UPS_RE = re.compile(r"\bhook\b.*user[_-]prompt[_-]submit", re.IGNORECASE |
 # turned a file into a user turn, and the capture extractors, which read any JSONL as a transcript. Claude Code and
 # the plugin's own background workers run these; the agent never needs to (review, 2026-11-24).
 _CLI_INTERNAL_RE = re.compile(
-    r"(?:em-hook|epistemic_monitor[\w.]*|(?<![\w-])em)['\"]?(?:\s+-{1,2}[\w=.-]+)*\s+['\"]?"
-    r"(hook|extract-capture|extract-pending|extract-text)(?![\w-])", re.IGNORECASE)
+    r"(?:em-hook|epistemic_monitor[\w.]*|(?<![\w-])em)['\"]?(?:(?:\s|\\\r?\n)+-{1,2}[\w=.-]+)*(?:\s|\\\r?\n)+['\"]?"
+    r"(hook|extract-capture|extract-pending|extract-text)(?![\w.-])", re.IGNORECASE)
 _LEDGER_ARGS_RE = re.compile(r"<command-name>/?(?:[\w.-]+:)?ledger</command-name>\s*<command-args>(.*?)</command-args>",
                              re.DOTALL)
 # a redirection token: `2>&1`, `>`, `>>`, `<`, `>out.txt`

@@ -16,20 +16,33 @@ from __future__ import annotations
 import re
 
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)")),
-    # sk-, sk-ant-, sk-proj-, sk-svcacct-: 32+ characters with a digit (`sk-scikit-learn-compat-wrapper` is a name)
-    ("api-key", re.compile(r"\bsk-(?:ant-|proj-|svcacct-)?(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{32,}")),
-    ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})")),
+    # a whole block, or a header followed by key body lines; a bare header ("files containing -----BEGIN ...")
+    # is not a secret and stays, with the rest of the sentence (review of the diff, 2026-11-24)
+    ("private-key", re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----"
+                               r"(?:[\s\S]{0,20000}?-----END [A-Z ]{0,40}PRIVATE KEY-----|(?:\s{1,4}[A-Za-z0-9+/=]{40,})+)")),
+    # sk-, sk-ant-, sk-proj-, sk-svcacct-: 32+ characters with a digit and a 20-character run without a hyphen
+    # (`sk-scikit-learn-compat-wrapper`, `sk-1234-refactor-payment-...` are names). Lookaheads are bounded so a long
+    # run of `sk-` stays linear.
+    ("api-key", re.compile(r"(?<![\w-])sk-(?:ant-|proj-|svcacct-)?(?=[A-Za-z0-9_-]{0,200}\d)"
+                           r"(?=[A-Za-z0-9_-]{0,200}[A-Za-z0-9_]{20})[A-Za-z0-9_-]{32,400}")),
+    ("stripe-key", re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,200}")),
+    ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,200}|github_pat_[A-Za-z0-9_]{40,300})")),
+    ("gitlab-token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,200}")),
+    ("huggingface-token", re.compile(r"\bhf_[A-Za-z0-9]{30,200}")),
+    ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
     ("aws-key-id", re.compile(r"\b(?:AK|AS)IA[0-9A-Z]{16}\b")),
-    ("slack-token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("slack-token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,200}")),
     ("google-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
-    ("jwt", re.compile(r"\beyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]{8,}")),
-    # user:password@ in a URL (git@host and ssh://git@host have no password part)
-    ("url-credentials", re.compile(r"(?<=://)[^\s/:@]+:[^\s/@]+(?=@)")),
+    ("jwt", re.compile(r"\beyJ[\w-]{8,2000}\.eyJ[\w-]{8,2000}\.[\w-]{8,2000}")),
+    ("bearer-token", re.compile(r"(?<=\bBearer )[A-Za-z0-9._~+/-]{20,2000}=*")),
+    # user:password@ in a URL (git@host and ssh://git@host have no password part; host:443@ is a port)
+    ("url-credentials", re.compile(r"(?<=://)[^\s/:@]{1,200}:(?!\d{1,5}@)[^\s/@]{1,200}(?=@)")),
 ]
-# name=value with no space and a value holding a digit: `password=hunter2pass`, not `token= parameter` or `$VAR`
-_ASSIGN = re.compile(r"(?i)\b((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)=)"
-                     r"(?![\[<{$])(?=[^\s'\"`,;]*\d)[^\s'\"`,;]{8,}")
+# NAME=value, including env-style names (DB_PASSWORD=, AWS_SECRET_ACCESS_KEY=, api_key = '...'): a value with a
+# digit, not a path, placeholder or `$VAR` (`token= parameter`, `pwd=/home/u/p2`, `password=${X}` stay)
+_ASSIGN = re.compile(r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_]{0,40}?(?:password|passwd|pwd|secret|token|api[_-]?key|"
+                     r"access[_-]?key|client[_-]?secret)[A-Za-z0-9_]{0,40} ?= ?['\"]?)"
+                     r"(?![\[<{$/~.])(?=[^\s'\"`,;]{0,200}\d)[^\s'\"`,;]{8,400}")
 
 
 def redact(text: str) -> str:

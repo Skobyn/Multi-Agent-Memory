@@ -71,3 +71,15 @@ def test_row_naming_a_subagent_is_sidechain_without_the_flag():
     assert all(t.is_sidechain for t in rows_to_turns(row))
     del row["agentId"]
     assert not any(t.is_sidechain for t in rows_to_turns(row))
+
+
+@pytest.mark.parametrize("cmd", [f"{CLI} \\\n  hook pre_compact < p.json",
+                                 f"em-hook \\\n extract-capture /tmp/f.jsonl --session s",
+                                 f"python3 -I bin/em-hook \\\n extract-text f --session s"])
+def test_line_continuation_does_not_hide_the_route(cmd):
+    assert authority.check(cmd, cmd)[0]
+
+
+@pytest.mark.parametrize("cmd", ['grep -rn "em-hook" hook.py', "ls src/epistemic_monitor hook.log"])
+def test_a_file_named_hook_is_not_the_subcommand(cmd):
+    assert authority._CLI_INTERNAL_RE.search(cmd) is None
