@@ -876,3 +876,14 @@ settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-fa
 as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
 gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
 unverified user quotes.
+
+## Addendum (2026-11-24): internal CLI routes, credential redaction
+
+From `docs/RESEARCH-2026-11-24.md` (2611.21259, 2611.29804, 2611.20144). The authority check refuses a Bash command
+that runs the CLI's `hook <handler>`, `extract-capture`, `extract-pending` or `extract-text`: each reads a
+caller-named transcript, payload or file as the user's own turns, so it could store user-authority entries or apply
+`by=user` supersessions. Claude Code and `background.spawn` start them directly. `extract-text` accepts only
+`--role assistant`. A transcript row that carries `agentId` is sidechain. `redact.py` replaces credential shapes
+(private keys, `sk-` keys, GitHub, AWS, Slack and Google keys, JWTs, URL passwords, `password=`-style assignments)
+with `[REDACTED:<kind>]` in entry statements, evidence, rationale and supersede reasons before they are stored;
+evidence checks run on the raw quote, falsifiers stay literal, and `REDACTED` is never an anchor.

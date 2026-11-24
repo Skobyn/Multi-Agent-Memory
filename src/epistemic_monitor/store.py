@@ -211,6 +211,8 @@ class LedgerStore:
 
     def retire(self, entry_id: str, reason: str, by: str = "agent", session_id: str = "") -> bool:
         """Close an entry without a replacement. Authority rule as for supersede: a user-made entry needs by='user'."""
+        from .redact import redact
+        reason = redact(reason)
         e = self.get_entry(entry_id)
         if e is None or e.status == "retired":
             return False
@@ -252,6 +254,8 @@ class LedgerStore:
     def supersede(self, old_id: str, new_id: str | None, reason: str, by: str, session_id: str = "") -> bool:
         """Apply the authority rule (DESIGN §3): a user-provenance entry can only be
         superseded with ``by="user"``. Returns False when refused."""
+        from .redact import redact
+        reason = redact(reason)   # the reason is stored and shown; a credential typed in it is not (redact.py)
         old = self.get_entry(old_id)
         if old is None:
             return False
