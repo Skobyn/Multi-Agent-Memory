@@ -876,3 +876,20 @@ settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-fa
 as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
 gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
 unverified user quotes.
+
+## Addendum (2026-11-25): falsifiers count what a change adds; calibration certifies or abstains
+
+Details and reviews: [`RESEARCH-2026-11-25.md`](RESEARCH-2026-11-25.md).
+
+- **§3 falsifiers.** `diff_regex_forbidden` now means "this change must not add a match", which is what the
+  extractor prompt already says ("must not appear in new code"). It no longer means "no file may contain a match".
+  The whole file is compared before and after (a Write's content, or the edits applied to the file on disk), with
+  each match keyed by its line. The rule trips when a key's count goes up. If the file can't be read, is over 1 MB,
+  or an edit does not apply, the whole new text is checked. Bash and NotebookEdit are unchanged. Tiers 2 and
+  3 receive a unified diff when the pre-image is known. Code that already breaks a rule (2611.29916: 18% of
+  dependency rules on the day they are written) no longer turns every rewrite of its file into a hard deny that
+  spends the session's deny budget. Copying such code still trips (2611.11455).
+- **§8.1 calibration.** A per-type τ is used only if the one-sided 95% Clopper-Pearson upper bound on its false-deny
+  rate is within the ceiling (2610.36544: certify or abstain). With the 2% default ceiling, that takes about 150
+  consistent labels. Otherwise nothing is stored. The gate's 0.9 floor for uncalibrated scores is lifted per entry
+  type, not globally. Calibration files that carry no certificate are ignored.
