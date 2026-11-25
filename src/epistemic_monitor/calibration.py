@@ -10,6 +10,7 @@ threshold is fit from sessions marked known-good. Everything is keyed by
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from .schema import now_iso
 
 GRID = [round(0.30 + 0.05 * i, 2) for i in range(14)]  # 0.30 .. 0.95
 MIN_LABELS_PER_TYPE = 12
+CONFIDENCE = 0.95   # one-sided confidence for the false-deny upper bound (2610.36544: certify or abstain)
 
 
 @dataclass
@@ -33,6 +35,10 @@ class Calibration:
 
     def tau(self, entry_type: str, default: float) -> float:
         return float(self.tau_by_type.get(entry_type, default))
+
+    def is_calibrated(self, entry_type: str) -> bool:
+        """Per type: fitting one type says nothing about another's threshold."""
+        return entry_type in self.tau_by_type
 
     @property
     def calibrated(self) -> bool:
@@ -66,10 +72,15 @@ def load_calibration(cfg: Config) -> Calibration:
         return Calibration(provider_key=provider_key(cfg))
     if d.get("provider_key") != provider_key(cfg):
         return Calibration(provider_key=provider_key(cfg))  # another provider's thresholds are not reused
-    return Calibration(provider_key=d.get("provider_key", ""), tau_by_type={k: float(v) for k, v in (d.get("tau_by_type") or {}).items()},
+    details = d.get("details") or {}
+    # Only thresholds certified by the interval rule are used. A file written before that rule (or edited by hand)
+    # carries no certificate, so its thresholds are dropped and the defaults apply until `calibrate` is run again.
+    taus = {k: float(v) for k, v in (d.get("tau_by_type") or {}).items()
+            if isinstance(details.get(k), dict) and details[k].get("certified") is True}
+    return Calibration(provider_key=d.get("provider_key", ""), tau_by_type=taus,
                        quantile_threshold=d.get("quantile_threshold"), n_labels=int(d.get("n_labels", 0)),
                        n_good_sessions=int(d.get("n_good_sessions", 0)), fitted_at=d.get("fitted_at", ""),
-                       details=d.get("details") or {})
+                       details=details)
 
 
 def add_label(cfg: Config, record: dict[str, Any]) -> None:
@@ -110,34 +121,72 @@ def good_sessions(cfg: Config) -> list[str]:
         return []
 
 
-def fit_tau(samples: list[tuple[float, bool]], max_false_deny: float = 0.02) -> tuple[float | None, dict[str, Any]]:
-    """samples: (p_conflict, is_conflict). Pick τ on the grid maximizing F1 with
-    false-deny rate (consistent samples with p ≥ τ, over all consistent samples) ≤ ceiling.
-    Falls back to the τ with the lowest false-deny rate if none satisfies the ceiling."""
+def _binom_cdf(k: int, n: int, p: float) -> float:
+    if p <= 0.0:
+        return 1.0
+    if p >= 1.0:
+        return 1.0 if k >= n else 0.0
+    lp, lq = math.log(p), math.log1p(-p)
+    return min(1.0, sum(math.exp(math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * lp + (n - i) * lq)
+                        for i in range(0, k + 1)))
+
+
+def false_deny_upper(fp: int, n_neg: int, confidence: float = CONFIDENCE) -> float:
+    """One-sided Clopper-Pearson upper bound on the false-deny rate after fp false denies in n_neg consistent
+    samples. With no consistent samples nothing is known, so the bound is 1."""
+    if n_neg <= 0:
+        return 1.0
+    if fp >= n_neg:
+        return 1.0
+    alpha = 1.0 - confidence
+    lo, hi = fp / n_neg, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if _binom_cdf(fp, n_neg, mid) > alpha:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def fit_tau(samples: list[tuple[float, bool]], max_false_deny: float = 0.02,
+            confidence: float = CONFIDENCE) -> tuple[float | None, dict[str, Any]]:
+    """samples: (p_conflict, is_conflict). Pick τ on the grid maximizing F1 among the τ whose false-deny rate
+    (consistent samples with p ≥ τ, over all consistent samples) is certified ≤ the ceiling: the one-sided
+    Clopper-Pearson upper bound at `confidence` must be under it, not just the observed rate (2610.36544).
+    When no τ is certified the fit abstains (None) and the gate keeps its defaults. With the 2% default ceiling
+    that takes about 150 consistent samples with no false deny at the chosen τ."""
     if not samples:
-        return None, {"reason": "no samples"}
+        return None, {"reason": "no samples", "certified": False}
     pos = [p for p, y in samples if y]
     neg = [p for p, y in samples if not y]
+    if not neg:
+        return None, {"reason": "no consistent (ok) samples; the false-deny rate is unknown", "certified": False,
+                      "n_pos": len(pos), "n_neg": 0}
     best, best_stats = None, None
-    fallback, fallback_fd = None, 1.0
+    closest: dict[str, Any] | None = None
     for tau in GRID:
         tp = sum(1 for p in pos if p >= tau)
         fp = sum(1 for p in neg if p >= tau)
         fn = len(pos) - tp
-        fd = fp / len(neg) if neg else 0.0
+        fd = fp / len(neg)
+        upper = false_deny_upper(fp, len(neg), confidence)
         prec = tp / (tp + fp) if tp + fp else 0.0
         rec = tp / (tp + fn) if tp + fn else 0.0
         f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
-        stats = {"tau": tau, "tp": tp, "fp": fp, "fn": fn, "false_deny": round(fd, 4), "precision": round(prec, 3),
-                 "recall": round(rec, 3), "f1": round(f1, 3)}
-        if fd <= max_false_deny and (best is None or f1 > best_stats["f1"] or (f1 == best_stats["f1"] and tau < best)):
+        stats = {"tau": tau, "tp": tp, "fp": fp, "fn": fn, "false_deny": round(fd, 4),
+                 "false_deny_upper": round(upper, 4), "precision": round(prec, 3), "recall": round(rec, 3),
+                 "f1": round(f1, 3), "n_pos": len(pos), "n_neg": len(neg)}
+        if closest is None or upper < closest["false_deny_upper"]:
+            closest = stats
+        if tp and upper <= max_false_deny and (best is None or f1 > best_stats["f1"] or (f1 == best_stats["f1"] and tau < best)):
             best, best_stats = tau, stats
-        if fd < fallback_fd or (fd == fallback_fd and fallback is None):
-            fallback, fallback_fd = tau, fd
     if best is not None:
-        return best, best_stats
-    return fallback, {"reason": "no tau met the false-deny ceiling; using the lowest-false-deny tau", "tau": fallback,
-                      "false_deny": round(fallback_fd, 4)}
+        return best, {**best_stats, "certified": True, "confidence": confidence}
+    need = math.ceil(math.log(1.0 - confidence) / math.log(1.0 - max_false_deny)) if 0 < max_false_deny < 1 else None
+    return None, {"reason": f"abstain: no tau has a {int(confidence * 100)}% upper bound on false denies within "
+                            f"{max_false_deny}" + (f" (needs at least {need} consistent samples with none denied)" if need else ""),
+                  "certified": False, "closest": closest}
 
 
 def fit_quantile(session_max_scores: list[float], alpha: float = 0.05) -> float | None:
@@ -170,7 +219,7 @@ def calibrate(cfg: Config, gate_records: list[dict[str, Any]], max_false_deny: f
             cal.details[etype] = {"reason": f"only {len(samples)} samples (< {min_labels}); default kept"}
             continue
         tau, stats = fit_tau(samples, max_false_deny)
-        if tau is not None:
+        if tau is not None and stats.get("certified") is True:
             cal.tau_by_type[etype] = tau
         cal.details[etype] = stats
     good = set(good_sessions(cfg))

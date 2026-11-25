@@ -13,12 +13,14 @@ never the agent's own confidence; and never blocks on a slow model.
 
 from __future__ import annotations
 
+import difflib
 import fnmatch
 import hashlib
 import json
 import os
 import re
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,12 +69,29 @@ class Change:
     text: str = ""
     command: str = ""
     is_new_file: bool = False
+    # Pre-images for the introduced-only falsifier check (2611.29916, 2611.11455): (old, new) per Edit/MultiEdit
+    # edit, and the file on disk for a Write that overwrites one. None means unknown: the whole text is checked.
+    edits: list[tuple[str, str]] | None = None
+    pre_image: str | None = None
 
     @property
     def is_mutating(self) -> bool:
         if self.tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
             return True
         return self.tool == "Bash" and classify(self.command).verdict == WRITES_SOURCE
+
+    def diff_text(self, max_chars: int = 120000) -> str:
+        """What the change adds and removes, for the decision model and advisor: a unified diff when the pre-image
+        is known, so code already in the file is not presented as new. Otherwise the new text."""
+        if self.pre_image is not None:
+            body = "".join(difflib.unified_diff(self.pre_image.splitlines(True), self.text.splitlines(True),
+                                                fromfile=f"a/{self.path}", tofile=f"b/{self.path}", n=2))
+            return body[:max_chars]
+        if self.edits:
+            parts = ["".join(difflib.unified_diff(o.splitlines(True), n.splitlines(True), fromfile=f"a/{self.path}",
+                                                  tofile=f"b/{self.path}", n=2)) for o, n in self.edits]
+            return "\n".join(parts)[:max_chars]
+        return self.text[:max_chars]
 
     def fingerprint(self) -> str:
         return hashlib.sha1(f"{self.tool}|{self.path}|{self.text[:4000]}".encode()).hexdigest()[:12]
@@ -144,15 +163,56 @@ def change_from_tool_input(tool: str, tool_input: dict[str, Any], cwd: str) -> C
     path = _rel(str(ti.get("file_path") or ti.get("notebook_path") or ""), cwd)
     if tool == "Write":
         abs_path = Path(cwd) / path if path and not os.path.isabs(path) else Path(path or "")
-        return Change(tool=tool, path=path, text=str(ti.get("content", "")), is_new_file=bool(path) and not abs_path.exists())
+        exists = bool(path) and abs_path.exists()
+        return Change(tool=tool, path=path, text=str(ti.get("content", "")), is_new_file=bool(path) and not exists,
+                      pre_image=_read_pre_image(abs_path) if exists else None)
     if tool == "Edit":
-        return Change(tool=tool, path=path, text=str(ti.get("new_string", "")))
+        old, new = str(ti.get("old_string", "")), str(ti.get("new_string", ""))
+        return Change(tool=tool, path=path, text=new, edits=[(old, new)])
     if tool == "MultiEdit":
-        edits = ti.get("edits") or []
-        return Change(tool=tool, path=path, text="\n".join(str(e.get("new_string", "")) for e in edits if isinstance(e, dict)))
+        edits = [e for e in (ti.get("edits") or []) if isinstance(e, dict)]
+        return Change(tool=tool, path=path, text="\n".join(str(e.get("new_string", "")) for e in edits),
+                      edits=[(str(e.get("old_string", "")), str(e.get("new_string", ""))) for e in edits])
     if tool == "NotebookEdit":
         return Change(tool=tool, path=path, text=str(ti.get("new_source", "")))
     return Change(tool=tool, path=path, text="")
+
+
+PRE_IMAGE_MAX_BYTES = 2_000_000
+
+
+def _read_pre_image(path: Path) -> str | None:
+    """The file a Write would overwrite, or None (check the whole new text, as before) if it cannot be read."""
+    try:
+        if not path.is_file() or path.stat().st_size > PRE_IMAGE_MAX_BYTES:
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _match_counts(pattern: str, text: str) -> Counter:
+    return Counter(m.group(0) for m in re.finditer(pattern, text, re.MULTILINE) if m.group(0))
+
+
+def introduced_matches(pattern: str, change: Change) -> Counter:
+    """Matches of a forbidden pattern that the change adds. Code already in the file is not the change's doing:
+    18% of repository rules are broken on the day they are written (2611.29916), and a rule that denies every
+    rewrite of such a file denies work that adds nothing. Copying an existing match is still added (2611.11455:
+    agents use existing violations as templates). Counted per matched string, per edit; with no known pre-image the
+    whole new text counts, as before."""
+    if change.edits is not None and change.tool in ("Edit", "MultiEdit"):
+        added: Counter = Counter()
+        for old, new in change.edits:
+            delta = _match_counts(pattern, new)
+            delta.subtract(_match_counts(pattern, old))
+            added.update({k: v for k, v in delta.items() if v > 0})
+        return added
+    if change.pre_image is not None and change.tool == "Write":
+        delta = _match_counts(pattern, change.text)
+        delta.subtract(_match_counts(pattern, change.pre_image))
+        return Counter({k: v for k, v in delta.items() if v > 0})
+    return _match_counts(pattern, change.text)
 
 
 def _match_glob(path: str, glob: str) -> bool:
@@ -179,7 +239,10 @@ def evaluate_falsifiers(entry: Entry, change: Change, cwd: str, history: list[di
         kind = f.get("kind")
         try:
             if kind == "diff_regex_forbidden" and change.text and re.search(f["pattern"], change.text, re.MULTILINE):
-                trips.append(Trip(entry.id, kind, f"pattern {f['pattern']!r} found in change"))
+                added = introduced_matches(f["pattern"], change)
+                if added:
+                    what = ", ".join(f"+{n} {m[:60]!r}" for m, n in added.most_common(3))
+                    trips.append(Trip(entry.id, kind, f"pattern {f['pattern']!r} added by change ({what})"))
             elif kind == "diff_regex_required" and change.tool == "Write" and change.is_new_file \
                     and not re.search(f["pattern"], change.text, re.MULTILINE):
                 trips.append(Trip(entry.id, kind, f"required pattern {f['pattern']!r} missing from new file"))
@@ -328,7 +391,7 @@ class GatePipeline:
         if change.tool == "Bash":
             planned["command"] = change.command[:max_chars]
         else:
-            planned["diff"] = change.text[:max_chars]
+            planned["diff"] = change.diff_text(max_chars)
             if change.is_new_file:
                 planned["new_file"] = True
         return {"decision": {"id": entry.id, "type": entry.type, "statement": entry.statement,
@@ -525,7 +588,7 @@ class GatePipeline:
 
         # Model-based conflicts
         min_p = float(self.g.get("enforce_uncalibrated_min_p", 0.9))
-        calibrated = self.calibration is not None and self.calibration.calibrated
+        cal = self.calibration
         if res.advisor and "verdict" in res.advisor:
             if res.advisor["verdict"] in ("conflict", "supersede_proposed"):
                 conflicts |= set(res.advisor["entry_ids"]) or set(res.flagged)
@@ -534,7 +597,7 @@ class GatePipeline:
                 # been talked out of a user rule: its payload carries agent entries and up to 8000 chars of
                 # trajectory, and neither can authorize breaking a user rule (2607.29167, 2609.02127). Only a
                 # recorded user supersession can.
-                held = self._held_user_flags(res, by_id, calibrated, min_p) if mode == "flagged" else []
+                held = self._held_user_flags(res, by_id, min_p) if mode == "flagged" else []
                 if held:
                     conflicts |= set(held)
                     why = ("advisor reply did not parse" if res.advisor.get("unparsed")
@@ -543,19 +606,23 @@ class GatePipeline:
         else:
             for eid in res.flagged:
                 p = res.scores[eid]["p_conflict"]
-                if calibrated or p >= min_p:
+                if self._calibrated(by_id.get(eid)) or p >= min_p:
                     conflicts.add(eid)
                 else:
                     res.notes.append(f"{eid}: flagged at p={p} but uncalibrated and below {min_p}; advisory only")
         return self._decide(res, by_id, conflicts, session_id, history)
 
-    def _held_user_flags(self, res: GateResult, by_id: dict[str, Entry], calibrated: bool, min_p: float) -> list[str]:
+    def _calibrated(self, entry: Entry | None) -> bool:
+        """The 0.9 floor is lifted only for an entry type whose own threshold was certified (calibration.py)."""
+        return entry is not None and self.calibration is not None and self.calibration.is_calibrated(entry.type)
+
+    def _held_user_flags(self, res: GateResult, by_id: dict[str, Entry], min_p: float) -> list[str]:
         """Flagged user rules a "consistent" verdict may not clear. Held only at the same bar the gate uses with no
         advisor (calibrated tau, or p >= min_p), so the advisor can never make the gate stricter than without it.
         Process entries are left to the advisor on destructive commands: it sees the real recent tool calls, and
         whether the required step already ran is exactly what it is there to judge."""
         user_flags = [eid for eid in res.flagged if eid in by_id and by_id[eid].user_authority
-                      and (calibrated or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p)]
+                      and (self._calibrated(by_id[eid]) or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p)]
         if res.advisor.get("unparsed"):
             return user_flags
         if not _DESTRUCTIVE.search(res.change.command or ""):

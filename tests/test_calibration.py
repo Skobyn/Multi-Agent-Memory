@@ -3,10 +3,15 @@ from epistemic_monitor.calibration import (Calibration, add_label, calibrate, fi
 
 
 def test_fit_tau_respects_false_deny_ceiling():
-    samples = [(0.9, True), (0.85, True), (0.8, True), (0.6, True), (0.55, False), (0.4, False), (0.3, False), (0.75, False)]
-    tau, stats = fit_tau(samples, max_false_deny=0.0)
-    assert tau == 0.8 and stats["fp"] == 0 and stats["recall"] == 0.75
-    tau, stats = fit_tau(samples, max_false_deny=0.3)
+    # The ceiling applies to the 95% upper bound, not the observed rate, so it needs enough consistent samples.
+    pos = [(0.9, True), (0.85, True), (0.8, True), (0.6, True)]
+    neg = [(0.55, False), (0.4, False), (0.3, False), (0.75, False)] * 50   # 200 consistent samples
+    tau, stats = fit_tau(pos + neg, max_false_deny=0.02)
+    assert tau == 0.8 and stats["fp"] == 0 and stats["recall"] == 0.75 and stats["certified"] is True
+    assert stats["false_deny_upper"] <= 0.02
+    # with no consistent samples above 0.55, a lower tau gains recall at no false-deny cost
+    neg2 = [(0.55, False), (0.4, False), (0.3, False), (0.5, False)] * 50
+    tau, stats = fit_tau(pos + neg2, max_false_deny=0.02)
     assert tau == 0.6 and stats["recall"] == 1.0
     assert fit_tau([], 0.02)[0] is None
 
@@ -18,14 +23,17 @@ def test_fit_quantile():
 
 def test_calibrate_end_to_end_and_provider_key(cfg):
     for i in range(14):
-        add_label(cfg, {"tool_use_id": f"t{i}", "label": "conflict" if i % 2 == 0 else "ok",
-                        "scores": {"D-0001": 0.9 if i % 2 == 0 else 0.3}, "types": {"D-0001": "decision"}, "session_id": "s"})
+        add_label(cfg, {"tool_use_id": f"t{i}", "label": "conflict",
+                        "scores": {"D-0001": 0.9}, "types": {"D-0001": "decision"}, "session_id": "s"})
+    for i in range(160):
+        add_label(cfg, {"tool_use_id": f"n{i}", "label": "ok",
+                        "scores": {"D-0001": 0.3}, "types": {"D-0001": "decision"}, "session_id": "s"})
     for s in ("g1", "g2", "g3", "g4", "g5"):
         mark_good_session(cfg, s)
     gates = [{"kind": "gate", "session_id": s, "max_p_conflict": p} for s, p in
              [("g1", 0.2), ("g2", 0.3), ("g3", 0.5), ("g4", 0.4), ("g5", 0.35), ("bad", 0.99)]]
     cal = calibrate(cfg, gates, max_false_deny=0.02, alpha=0.2, min_labels=12)
-    assert cal.tau_by_type["decision"] == 0.35 and cal.n_labels == 14 and cal.n_good_sessions == 5
+    assert cal.tau_by_type["decision"] == 0.35 and cal.n_labels == 174 and cal.n_good_sessions == 5
     assert cal.quantile_threshold == 0.4  # (1-0.2) quantile of 5 known-good maxima
     loaded = load_calibration(cfg)
     assert loaded.calibrated and loaded.tau("decision", 0.75) == 0.35 and loaded.tau("process", 0.6) == 0.6
