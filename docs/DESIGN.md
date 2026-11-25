@@ -883,9 +883,9 @@ Details and reviews: [`RESEARCH-2026-11-25.md`](RESEARCH-2026-11-25.md).
 
 - **§3 falsifiers.** `diff_regex_forbidden` now means "this change must not add a match", which is what the
   extractor prompt already says ("must not appear in new code"). It no longer means "no file may contain a match".
-  For Edit and MultiEdit, each matched string is counted in each edit's `new_string` and `old_string`. For a Write
-  that overwrites a file, it is counted in the new content and in the file on disk. The rule trips only on a count
-  increase. If the pre-image is unknown, the whole text is checked. Bash and NotebookEdit are unchanged. Tiers 2 and
+  The whole file is compared before and after (a Write's content, or the edits applied to the file on disk), with
+  each match keyed by its line. The rule trips when a key's count goes up. If the file can't be read, is over 1 MB,
+  or an edit does not apply, the whole new text is checked. Bash and NotebookEdit are unchanged. Tiers 2 and
   3 receive a unified diff when the pre-image is known. Code that already breaks a rule (2611.29916: 18% of
   dependency rules on the day they are written) no longer turns every rewrite of its file into a hard deny that
   spends the session's deny budget. Copying such code still trips (2611.11455).

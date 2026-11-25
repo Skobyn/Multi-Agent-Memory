@@ -62,6 +62,11 @@ recent_tool_calls_this_session: if the required step already ran, the change is 
 
 
 # ---------------------------------------------------------------- data
+_UNSET = object()
+PRE_IMAGE_MAX_BYTES = 1_000_000   # a pattern matching every line of a 1 MB file costs ~120 ms
+DIFF_MAX_CHARS = 200_000
+
+
 @dataclass
 class Change:
     tool: str
@@ -69,10 +74,12 @@ class Change:
     text: str = ""
     command: str = ""
     is_new_file: bool = False
-    # Pre-images for the introduced-only falsifier check (2611.29916, 2611.11455): (old, new) per Edit/MultiEdit
-    # edit, and the file on disk for a Write that overwrites one. None means unknown: the whole text is checked.
-    edits: list[tuple[str, str]] | None = None
-    pre_image: str | None = None
+    # For the introduced-only falsifier check (2611.29916, 2611.11455): the file the change applies to, and for
+    # Edit/MultiEdit the (old, new, replace_all) edits. images() reads the file only when a rule needs it.
+    abs_path: str = ""
+    edits: list[tuple[str, str, bool]] | None = None
+    _images: Any = field(default=_UNSET, repr=False, compare=False)
+    _diff: Any = field(default=None, repr=False, compare=False)
 
     @property
     def is_mutating(self) -> bool:
@@ -80,18 +87,40 @@ class Change:
             return True
         return self.tool == "Bash" and classify(self.command).verdict == WRITES_SOURCE
 
+    def images(self) -> tuple[str, str] | None:
+        """(file before, file after) for a Write over an existing file or an Edit/MultiEdit that applies cleanly to
+        the file on disk, else None (unknown: callers fall back to the new text alone)."""
+        if self._images is _UNSET:
+            self._images = None
+            if self.tool in ("Write", "Edit", "MultiEdit") and self.abs_path and not self.is_new_file:
+                pre = _read_pre_image(Path(self.abs_path))
+                if pre is not None:
+                    if self.tool == "Write":
+                        self._images = (pre, self.text)
+                    else:
+                        cur = pre
+                        for old, new, replace_all in self.edits or []:
+                            if not old or old not in cur:
+                                cur = None
+                                break
+                            cur = cur.replace(old, new) if replace_all else cur.replace(old, new, 1)
+                        if cur is not None and self.edits:
+                            self._images = (pre, cur)
+        return self._images
+
     def diff_text(self, max_chars: int = 120000) -> str:
-        """What the change adds and removes, for the decision model and advisor: a unified diff when the pre-image
-        is known, so code already in the file is not presented as new. Otherwise the new text."""
-        if self.pre_image is not None:
-            body = "".join(difflib.unified_diff(self.pre_image.splitlines(True), self.text.splitlines(True),
-                                                fromfile=f"a/{self.path}", tofile=f"b/{self.path}", n=2))
-            return body[:max_chars]
-        if self.edits:
-            parts = ["".join(difflib.unified_diff(o.splitlines(True), n.splitlines(True), fromfile=f"a/{self.path}",
-                                                  tofile=f"b/{self.path}", n=2)) for o, n in self.edits]
-            return "\n".join(parts)[:max_chars]
-        return self.text[:max_chars]
+        """What the change adds and removes, for the decision model and advisor: a unified diff of the whole file
+        when both images are known (so code already there is not presented as new), otherwise the new text."""
+        if self._diff is None:
+            self._diff = self.text
+            imgs = self.images()
+            if imgs is not None and max(len(imgs[0]), len(imgs[1])) <= DIFF_MAX_CHARS:
+                pre, post = (t if t.endswith("\n") or not t else t + "\n" for t in imgs)
+                body = "".join(difflib.unified_diff(pre.splitlines(True), post.splitlines(True),
+                                                    fromfile=f"a/{self.path}", tofile=f"b/{self.path}", n=2))
+                if body:
+                    self._diff = body
+        return self._diff[:max_chars]
 
     def fingerprint(self) -> str:
         return hashlib.sha1(f"{self.tool}|{self.path}|{self.text[:4000]}".encode()).hexdigest()[:12]
@@ -161,24 +190,23 @@ def change_from_tool_input(tool: str, tool_input: dict[str, Any], cwd: str) -> C
         cmd = str(ti.get("command", ""))
         return Change(tool=tool, text=cmd, command=cmd)
     path = _rel(str(ti.get("file_path") or ti.get("notebook_path") or ""), cwd)
+    abs_path = str(Path(cwd) / path) if path and not os.path.isabs(path) else path
     if tool == "Write":
-        abs_path = Path(cwd) / path if path and not os.path.isabs(path) else Path(path or "")
-        exists = bool(path) and abs_path.exists()
+        exists = bool(path) and Path(abs_path).exists()
         return Change(tool=tool, path=path, text=str(ti.get("content", "")), is_new_file=bool(path) and not exists,
-                      pre_image=_read_pre_image(abs_path) if exists else None)
+                      abs_path=abs_path)
     if tool == "Edit":
-        old, new = str(ti.get("old_string", "")), str(ti.get("new_string", ""))
-        return Change(tool=tool, path=path, text=new, edits=[(old, new)])
+        new = str(ti.get("new_string", ""))
+        return Change(tool=tool, path=path, text=new, abs_path=abs_path,
+                      edits=[(str(ti.get("old_string", "")), new, bool(ti.get("replace_all")))])
     if tool == "MultiEdit":
         edits = [e for e in (ti.get("edits") or []) if isinstance(e, dict)]
-        return Change(tool=tool, path=path, text="\n".join(str(e.get("new_string", "")) for e in edits),
-                      edits=[(str(e.get("old_string", "")), str(e.get("new_string", ""))) for e in edits])
+        return Change(tool=tool, path=path, text="\n".join(str(e.get("new_string", "")) for e in edits), abs_path=abs_path,
+                      edits=[(str(e.get("old_string", "")), str(e.get("new_string", "")), bool(e.get("replace_all")))
+                             for e in edits])
     if tool == "NotebookEdit":
         return Change(tool=tool, path=path, text=str(ti.get("new_source", "")))
     return Change(tool=tool, path=path, text="")
-
-
-PRE_IMAGE_MAX_BYTES = 2_000_000
 
 
 def _read_pre_image(path: Path) -> str | None:
@@ -191,28 +219,31 @@ def _read_pre_image(path: Path) -> str | None:
         return None
 
 
-def _match_counts(pattern: str, text: str) -> Counter:
-    return Counter(m.group(0) for m in re.finditer(pattern, text, re.MULTILINE) if m.group(0))
+def _match_keys(pattern: str, text: str) -> Counter:
+    """Each match keyed by the whole line it starts on plus the matched text. Keying on the line, not the matched
+    string alone, keeps an unrelated occurrence (a comment, another call site) from cancelling a new one, and gives
+    zero-width matches (lookaheads) a key."""
+    keys: Counter = Counter()
+    for m in re.finditer(pattern, text, re.MULTILINE):
+        start = text.rfind("\n", 0, m.start()) + 1
+        end = text.find("\n", m.start())
+        keys[(text[start:end if end >= 0 else len(text)], m.group(0))] += 1
+    return keys
 
 
 def introduced_matches(pattern: str, change: Change) -> Counter:
     """Matches of a forbidden pattern that the change adds. Code already in the file is not the change's doing:
     18% of repository rules are broken on the day they are written (2611.29916), and a rule that denies every
     rewrite of such a file denies work that adds nothing. Copying an existing match is still added (2611.11455:
-    agents use existing violations as templates). Counted per matched string, per edit; with no known pre-image the
-    whole new text counts, as before."""
-    if change.edits is not None and change.tool in ("Edit", "MultiEdit"):
-        added: Counter = Counter()
-        for old, new in change.edits:
-            delta = _match_counts(pattern, new)
-            delta.subtract(_match_counts(pattern, old))
-            added.update({k: v for k, v in delta.items() if v > 0})
-        return added
-    if change.pre_image is not None and change.tool == "Write":
-        delta = _match_counts(pattern, change.text)
-        delta.subtract(_match_counts(pattern, change.pre_image))
-        return Counter({k: v for k, v in delta.items() if v > 0})
-    return _match_counts(pattern, change.text)
+    agents use existing violations as templates), and so is any edit to a line that holds one. The whole file
+    is compared before and after (anchors see real line starts). With no usable pre-image every match in the new
+    text counts, as before. Returns Counter of (line, match)."""
+    imgs = change.images()
+    if imgs is None:
+        return _match_keys(pattern, change.text)
+    delta = _match_keys(pattern, imgs[1])
+    delta.subtract(_match_keys(pattern, imgs[0]))
+    return Counter({k: v for k, v in delta.items() if v > 0})
 
 
 def _match_glob(path: str, glob: str) -> bool:
@@ -241,7 +272,10 @@ def evaluate_falsifiers(entry: Entry, change: Change, cwd: str, history: list[di
             if kind == "diff_regex_forbidden" and change.text and re.search(f["pattern"], change.text, re.MULTILINE):
                 added = introduced_matches(f["pattern"], change)
                 if added:
-                    what = ", ".join(f"+{n} {m[:60]!r}" for m, n in added.most_common(3))
+                    shown: Counter = Counter()
+                    for (line, m), n in added.items():
+                        shown[(m or line.strip())[:60]] += n
+                    what = ", ".join(f"+{n} {m!r}" for m, n in shown.most_common(3))
                     trips.append(Trip(entry.id, kind, f"pattern {f['pattern']!r} added by change ({what})"))
             elif kind == "diff_regex_required" and change.tool == "Write" and change.is_new_file \
                     and not re.search(f["pattern"], change.text, re.MULTILINE):
