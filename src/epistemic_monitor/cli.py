@@ -299,9 +299,10 @@ def ledger(argv: list[str]) -> int:
             mark_good_session(cfg, args.session_id)
             print(f"session {args.session_id} marked known-good")
         elif args.cmd == "calibrate":
-            from .calibration import calibrate
+            from .calibration import MIN_LABELS_PER_TYPE, calibrate
             gates = [r for r in store.recent_interventions(20000) if r.get("kind") == "gate"]
-            cal = calibrate(cfg, gates, args.max_false_deny, args.alpha, args.min_labels)
+            # the floor holds on the CLI path: one label must not be enough to refit a type (review 2026-11-26)
+            cal = calibrate(cfg, gates, args.max_false_deny, args.alpha, max(args.min_labels, MIN_LABELS_PER_TYPE))
             print(json.dumps(cal.to_dict(), indent=2))
     finally:
         store.close()

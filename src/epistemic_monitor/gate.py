@@ -318,7 +318,20 @@ class GatePipeline:
     # ---- helpers
     def _tau(self, entry: Entry) -> float:
         default = float(self.g.get("tau_by_type", {}).get(entry.type, self.g.get("tau_default", 0.75)))
-        return self.calibration.tau(entry.type, default) if self.calibration is not None else default
+        if not self._calibrated_for(entry):
+            return default
+        tau = self.calibration.tau(entry.type, default)
+        if entry.user_authority:
+            # Calibration may only make a user rule stricter than the uncalibrated bar (p >= min_p), never looser:
+            # labels.jsonl and calibration.json are written by whoever runs the CLI, the agent included, and a
+            # verifier graded by the party it verifies drifts into accepting (PROVE 2611.34215; 2610.39660).
+            tau = min(tau, float(self.g.get("enforce_uncalibrated_min_p", 0.9)))
+        return tau
+
+    def _calibrated_for(self, entry: Entry) -> bool:
+        """Calibrated for this entry's type. Per type: calibrating one type must not lift the uncalibrated min_p
+        floor for every other type (review 2026-11-26)."""
+        return self.calibration is not None and entry.type in (self.calibration.tau_by_type or {})
 
     def _state_for(self, entry: Entry, change: Change) -> dict[str, Any]:
         max_chars = int(self.g.get("max_diff_chars", 120000))
@@ -525,7 +538,6 @@ class GatePipeline:
 
         # Model-based conflicts
         min_p = float(self.g.get("enforce_uncalibrated_min_p", 0.9))
-        calibrated = self.calibration is not None and self.calibration.calibrated
         if res.advisor and "verdict" in res.advisor:
             if res.advisor["verdict"] in ("conflict", "supersede_proposed"):
                 conflicts |= set(res.advisor["entry_ids"]) or set(res.flagged)
@@ -534,7 +546,7 @@ class GatePipeline:
                 # been talked out of a user rule: its payload carries agent entries and up to 8000 chars of
                 # trajectory, and neither can authorize breaking a user rule (2607.29167, 2609.02127). Only a
                 # recorded user supersession can.
-                held = self._held_user_flags(res, by_id, calibrated, min_p) if mode == "flagged" else []
+                held = self._held_user_flags(res, by_id, min_p) if mode == "flagged" else []
                 if held:
                     conflicts |= set(held)
                     why = ("advisor reply did not parse" if res.advisor.get("unparsed")
@@ -543,19 +555,19 @@ class GatePipeline:
         else:
             for eid in res.flagged:
                 p = res.scores[eid]["p_conflict"]
-                if calibrated or p >= min_p:
+                if (eid in by_id and self._calibrated_for(by_id[eid])) or p >= min_p:
                     conflicts.add(eid)
                 else:
                     res.notes.append(f"{eid}: flagged at p={p} but uncalibrated and below {min_p}; advisory only")
         return self._decide(res, by_id, conflicts, session_id, history)
 
-    def _held_user_flags(self, res: GateResult, by_id: dict[str, Entry], calibrated: bool, min_p: float) -> list[str]:
+    def _held_user_flags(self, res: GateResult, by_id: dict[str, Entry], min_p: float) -> list[str]:
         """Flagged user rules a "consistent" verdict may not clear. Held only at the same bar the gate uses with no
         advisor (calibrated tau, or p >= min_p), so the advisor can never make the gate stricter than without it.
         Process entries are left to the advisor on destructive commands: it sees the real recent tool calls, and
         whether the required step already ran is exactly what it is there to judge."""
         user_flags = [eid for eid in res.flagged if eid in by_id and by_id[eid].user_authority
-                      and (calibrated or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p)]
+                      and (self._calibrated_for(by_id[eid]) or float(res.scores.get(eid, {}).get("p_conflict", 0.0)) >= min_p)]
         if res.advisor.get("unparsed"):
             return user_flags
         if not _DESTRUCTIVE.search(res.change.command or ""):

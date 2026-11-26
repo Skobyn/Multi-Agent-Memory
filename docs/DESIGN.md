@@ -876,3 +876,15 @@ settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-fa
 as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
 gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
 unverified user quotes.
+
+## Addendum (2026-11-26): the verified party cannot grade its verifier
+
+From `docs/RESEARCH-2026-11-26.md` (2611.34215, 2610.39660). A calibrated tau for a user-authority entry is capped
+at `gate.enforce_uncalibrated_min_p`. Calibration can make a user rule stricter than the uncalibrated bar, never
+looser, whatever wrote `labels.jsonl` or `calibration.json`. "Calibrated" is per entry type: fitting `decision`
+no longer lifts the min_p floor for `constraint`. `calibrate` keeps one label per `tool_use_id` (the last), and
+`ledger calibrate --min-labels` is floored at `MIN_LABELS_PER_TYPE` (12). A Bash command that imports
+`epistemic_monitor` and passes `by`/`source="user"` or calls `.confirm(` is refused by the authority check. One that
+calls a store mutator is flagged by `selfguard` (advisory). When `LedgerStore` replays `ledger.jsonl` into an empty
+index, it records `index_rebuilt` in project state. The next PreToolUse or SessionStart tells the user once, naming
+the user-authority entries that the replay left inactive.

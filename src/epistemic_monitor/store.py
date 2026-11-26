@@ -45,7 +45,23 @@ class LedgerStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
         if self.count_entries() == 0 and config.ledger_path.exists():
-            self.rebuild_from_events()
+            n = self.rebuild_from_events()
+            if n and self.count_entries():
+                self._note_rebuild(n)
+
+    def _note_rebuild(self, n: int) -> None:
+        """An unattended replay of ledger.jsonl into an empty index is the one moment a line appended to the ledger
+        by hand takes effect, and the config fingerprint baseline is gone with the old index. Nothing in the line can
+        prove where it came from (review 2026-11-26, idea B: a same-uid agent can forge any field, key or chain), so
+        record it for the user instead: hooks.py shows it once, naming the user rules the replay left inactive."""
+        inactive = [f"{e.id} {e.status}" + (f" by {e.revoked_by}" if e.revoked_by else "")
+                    for e in self.entries(None) if e.user_authority and e.status != "active"]
+        item = {"ts": now_iso(), "events": n, "user_inactive": inactive[:20], "more": max(0, len(inactive) - 20)}
+        try:
+            self.append_state("_project", "index_rebuilt", item, cap=5)
+            self.log_intervention({"kind": "index_rebuilt", **item})
+        except sqlite3.Error:
+            pass
 
     # ------------------------------------------------------------------ schema
     def _create_tables(self) -> None:

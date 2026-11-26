@@ -91,6 +91,21 @@ def read_labels(cfg: Config) -> list[dict[str, Any]]:
     return out
 
 
+def latest_labels(labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One label per tool call, the last one written: relabeling corrects a verdict rather than adding a sample, and
+    repeating ``ledger label <id> ok`` cannot stack one call into a whole type's worth of samples (review 2026-11-26)."""
+    by_id: dict[Any, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
+    for lab in labels:
+        tid = lab.get("tool_use_id")
+        if tid:
+            by_id.pop(tid, None)   # re-insert so order follows the latest write
+            by_id[tid] = lab
+        else:
+            unkeyed.append(lab)
+    return unkeyed + list(by_id.values())
+
+
 def mark_good_session(cfg: Config, session_id: str) -> None:
     p = good_sessions_path(cfg)
     try:
@@ -153,7 +168,7 @@ def calibrate(cfg: Config, gate_records: list[dict[str, Any]], max_false_deny: f
               alpha: float = 0.05, min_labels: int = MIN_LABELS_PER_TYPE) -> Calibration:
     """Fit from labels (each: {tool_use_id, label: conflict|ok, scores: {entry_id: p}, types: {entry_id: type}})
     and from gate records of known-good sessions (shadow scores)."""
-    labels = read_labels(cfg)
+    labels = latest_labels(read_labels(cfg))
     by_type: dict[str, list[tuple[float, bool]]] = {}
     for lab in labels:
         is_conflict = lab.get("label") == "conflict"

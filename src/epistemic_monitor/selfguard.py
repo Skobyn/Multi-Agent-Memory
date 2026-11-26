@@ -34,6 +34,11 @@ _WRITE_HINT = re.compile(r">|\b(?:tee|sed|perl|rm|mv|cp|rsync|install|ln|touch|t
 _CONTROL = re.compile(r"[;&|`\n]|\$\(")
 # the data dir is ``.../epistemic``: a path segment, not a prefix of ``epistemic-monitor`` (this plugin's checkout)
 _EPISTEMIC_PATH = re.compile(r"epistemic\.json|/epistemic(?=/|$|[\s\"';&|)])")
+# a store or config method that writes, called in-process from Bash (see authority.INPROC_RE)
+_STORE_WRITE = re.compile(r"\.(?:supersede|retire|confirm|resolve|add_entry|update_entry|set_status|set_embedding|"
+                          r"rebuild_from_events|_apply_event|_append_event|_upsert|set_state|append_state|pop_state|"
+                          r"clear_state_if|set_watermark|log_intervention|execute|executescript|write_text)\s*\(|"
+                          r"\b(?:add_label|mark_good_session|calibrate|write_pinned)\s*\(")
 _SETTINGS_PATH = re.compile(r"\.claude/settings(?:\.local)?\.json")
 _SETTINGS_RISK = re.compile(r"disableAllHooks|\"hooks\"|enabledPlugins|EPISTEMIC_|epistemic")
 
@@ -64,6 +69,8 @@ def protected_target(tool: str, tool_input: dict[str, Any], cfg: Config) -> str 
         cmd = str(ti.get("command") or "")
         if not cmd.strip() or authority.only_ledger(cmd):
             return None   # nothing but ledger CLI calls: they write the ledger in-process, and authority.py checks them
+        if authority.INPROC_RE.search(cmd) and _STORE_WRITE.search(cmd):
+            return "the monitor's ledger (an in-process store call)"
         if _READ_ONLY_LEAD.match(cmd) and not _CONTROL.search(cmd) and ">" not in cmd:
             return None
         if not _WRITE_HINT.search(cmd):
@@ -135,6 +142,29 @@ def config_change(cfg: Config, store) -> tuple[list[str] | None, dict[str, Any]]
 def commit(store, state: dict[str, Any]) -> None:
     if state:
         store.set_state(PROJECT_STATE, FP_KEY, state)
+
+
+REBUILT_KEY = "index_rebuilt"
+
+
+def rebuild_notice(store) -> tuple[str | None, list[Any]]:
+    """(notice for the user, the items to clear with ``commit_rebuild`` once it is delivered)."""
+    items = store.get_state(PROJECT_STATE, REBUILT_KEY) or []
+    if not items:
+        return None, []
+    last = items[-1]
+    inactive = list(last.get("user_inactive") or [])
+    shown = ", ".join(inactive) + (f", and {last.get('more')} more" if last.get("more") else "")
+    text = (f"Epistemic monitor: its index was rebuilt from ledger.jsonl ({last.get('events')} events), which "
+            "happens when index.db is missing or empty. ")
+    text += (f"User rules not active after the replay: {shown}. If you did not retire these, check ledger.jsonl "
+             "for lines you did not write." if inactive else "No user rule was left inactive.")
+    return text, items
+
+
+def commit_rebuild(store, items: list[Any]) -> None:
+    if items:
+        store.clear_state_if(PROJECT_STATE, REBUILT_KEY, items, [])
 
 
 def change_notice(changed: list[str], cfg: Config) -> str:
