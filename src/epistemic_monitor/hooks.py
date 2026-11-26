@@ -750,7 +750,28 @@ def subagent_stop(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> d
 # ---------------------------------------------------------------- the monitor's own files (selfguard.py)
 def _config_notice(cfg: Config, store: LedgerStore, sid: str) -> tuple[str | None, dict[str, Any]]:
     """(notice for the user, state to commit after the hook's output is built). The user is told once when the
-    config file layers changed since the monitor last ran in this project."""
+    config file layers changed since the monitor last ran in this project, and once when the index was rebuilt."""
+    try:
+        rb_note, rb_items = selfguard.rebuild_notice(store)
+    except Exception:  # noqa: BLE001 - observability only
+        rb_note, rb_items = None, []
+    cfg_note, state = _config_change_notice(cfg, store, sid)
+    if rb_items:
+        state = {**state, "_rebuilt": rb_items}
+    notes = [n for n in (rb_note, cfg_note) if n]
+    return ("\n".join(notes) if notes else None), state
+
+
+def _commit_notices(store: LedgerStore, state: dict[str, Any]) -> None:
+    """Record the notices as delivered, only after the hook's output is built."""
+    state = dict(state or {})
+    rb_items = state.pop("_rebuilt", None)
+    selfguard.commit(store, state)
+    if rb_items:
+        selfguard.commit_rebuild(store, rb_items)
+
+
+def _config_change_notice(cfg: Config, store: LedgerStore, sid: str) -> tuple[str | None, dict[str, Any]]:
     try:
         changed, state = selfguard.config_change(cfg, store)
     except Exception:  # noqa: BLE001 - observability only
@@ -780,7 +801,7 @@ def _with_notes(event: str, output: dict[str, Any] | None, agent_note: str | Non
 def session_start(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> dict[str, Any] | None:
     notice, state = _config_notice(cfg, store, _session(payload))
     out = _with_notes("session_start", _session_start(payload, cfg, store), None, notice)
-    selfguard.commit(store, state)
+    _commit_notices(store, state)
     return out
 
 
@@ -805,7 +826,7 @@ def pre_tool_use(payload: dict[str, Any], cfg: Config, store: LedgerStore) -> di
     if target:
         user_note = ((notice + "\n") if notice else "") + f"Epistemic monitor: the agent is writing {target} ({tool})."
     out = _with_notes("pre_tool_use", output, selfguard.advisory_text(target) if target else notice, user_note)
-    selfguard.commit(store, state)   # only now: a gate that raised or was killed leaves the notice to the next call
+    _commit_notices(store, state)   # only now: a gate that raised or was killed leaves the notice to the next call
     return out
 
 HANDLERS: dict[str, hooklib.Handler] = {

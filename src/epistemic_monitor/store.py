@@ -45,7 +45,23 @@ class LedgerStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
         if self.count_entries() == 0 and config.ledger_path.exists():
-            self.rebuild_from_events()
+            n = self.rebuild_from_events()
+            if n and self.count_entries():
+                self._note_rebuild(n)
+
+    def _note_rebuild(self, n: int) -> None:
+        """An unattended replay of ledger.jsonl into an empty index is the one moment a line appended to the ledger
+        by hand takes effect, and the config fingerprint baseline is gone with the old index. Nothing in the line can
+        prove where it came from (review 2026-11-26, idea B: a same-uid agent can forge any field, key or chain), so
+        record it for the user instead: hooks.py shows it once, listing every replayed event that retired,
+        superseded, demoted or rescoped a user rule, newest first (a forged line is most likely the last one)."""
+        changes = list(reversed(getattr(self, "replay_user_changes", []) or []))
+        item = {"ts": now_iso(), "events": n, "user_changes": changes[:12], "more": max(0, len(changes) - 12)}
+        try:
+            self.append_state("_project", "index_rebuilt", item, cap=5)
+            self.log_intervention({"kind": "index_rebuilt", **item})
+        except sqlite3.Error:
+            pass
 
     # ------------------------------------------------------------------ schema
     def _create_tables(self) -> None:
@@ -102,10 +118,38 @@ class LedgerStore:
             self._conn.execute("DELETE FROM entries_fts")
             self._conn.execute("DELETE FROM counters")
         n = 0
+        self.replay_user_changes = []
         for ev in self.iter_events():
+            change = self._user_rule_change(ev)
             self._apply_event(ev, record=False)
+            if change:
+                self.replay_user_changes.append(change)
             n += 1
         return n
+
+    _WEAKENING_FIELDS = ("provenance", "scope", "statement", "falsifiers", "falsifier", "status", "type")
+
+    def _user_rule_change(self, ev: dict[str, Any]) -> str | None:
+        """What this replayed event does to a user-authority entry (retire, supersede, demote, rescope), or None.
+        Read before the event is applied, so a demotion is seen while the entry still has authority."""
+        kind = ev.get("event")
+        eid = ev.get("old") if kind == "supersede" else ev.get("id")
+        if kind not in ("supersede", "status", "entry_update") or not eid:
+            return None
+        e = self.get_entry(eid)
+        if e is None or not e.user_authority:
+            return None
+        if kind == "entry_update":
+            touched = sorted(k for k in (ev.get("fields") or {}) if k in self._WEAKENING_FIELDS)
+            if not touched:
+                return None
+            what = "changed " + "/".join(touched)
+        elif kind == "status":
+            what = str(ev.get("status") or "status changed")
+        else:
+            what = "superseded"
+        by = ev.get("by")
+        return f"{eid} {what}" + (f" by {by}" if by else "") + (f" ({str(ev.get('ts'))[:10]})" if ev.get("ts") else "")
 
     def _apply_event(self, ev: dict[str, Any], record: bool = True) -> None:
         kind = ev.get("event")
