@@ -36,10 +36,19 @@ _LEDGER_ARGS_RE = re.compile(r"<command-name>/?(?:[\w.-]+:)?ledger</command-name
 # a redirection token: `2>&1`, `>`, `>>`, `<`, `>out.txt`
 _REDIRECT_TOK_RE = re.compile(r"^\d*(?:>>?|<)(&\d*|.*)$")
 _SEPARATORS = ";&|\n()`"
-# The plugin's own package imported in a Bash command (``python3 -c``, a heredoc): it reaches the store with no CLI
-# in between, so ``supersede(..., by="user")`` wrote a user-authority event that nothing saw (review 2026-11-26, P3).
-INPROC_RE = re.compile(r"\b(?:import\s+epistemic_monitor|from\s+epistemic_monitor[\w.]*\s+import)\b")
-_INPROC_USER_RE = re.compile(r"""\b(?:by|source|revoked_by)\s*=\s*['"]user['"]|\.confirm\s*\(""")
+# The plugin's own package run by an interpreter from Bash (``python3 -c``, ``python3 - <<EOF``): it reaches the
+# store with no CLI in between, so ``supersede(..., by="user")`` wrote a user-authority event that nothing saw
+# (review 2026-11-26, P3). A speed bump, not a boundary: a script file, base64 or a variable gets past it. It needs
+# an interpreter invocation, so grep, git commit -m and a heredoc written to a test file are left alone.
+_INTERP_RE = re.compile(r"\bpython[\d.]*\s+(?:-[A-Za-z]*c\b|-\s*<<|<<)")
+_IMPORT_RE = re.compile(r"\bimport\s+[\w\s,.]*\bepistemic_monitor\b|\bfrom\s+epistemic_monitor\b[\w.\s]*\bimport\b|"
+                        r"(?:__import__|import_module)\s*\(\s*['\"]epistemic_monitor")
+_INPROC_USER_RE = re.compile(r"""['"]user['"]""")
+
+
+def inprocess(command: str) -> bool:
+    """Does this Bash command run the plugin's package in an interpreter?"""
+    return bool(command) and bool(_INTERP_RE.search(command)) and bool(_IMPORT_RE.search(command))
 
 
 def _canon_id(m: re.Match) -> str:
@@ -199,7 +208,7 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     if _HOOK_UPS_RE.search(command):
         return ("Epistemic monitor: running the user_prompt_submit hook by hand would apply SUPERSEDE lines with the "
                 "user's authority. Claude Code runs hooks itself; do not run it from Bash."), []
-    if INPROC_RE.search(command) and _INPROC_USER_RE.search(command):
+    if inprocess(command) and _INPROC_USER_RE.search(command):
         return ("Epistemic monitor: this command imports the monitor and writes to its store with the user's "
                 "authority directly, which no user turn can grant. Do not retry it another way; ask the user, who can "
                 "type `/ledger ...` or `SUPERSEDE <id>: <reason>` themselves."), []

@@ -883,8 +883,9 @@ From `docs/RESEARCH-2026-11-26.md` (2611.34215, 2610.39660). A calibrated tau fo
 at `gate.enforce_uncalibrated_min_p`. Calibration can make a user rule stricter than the uncalibrated bar, never
 looser, whatever wrote `labels.jsonl` or `calibration.json`. "Calibrated" is per entry type: fitting `decision`
 no longer lifts the min_p floor for `constraint`. `calibrate` keeps one label per `tool_use_id` (the last), and
-`ledger calibrate --min-labels` is floored at `MIN_LABELS_PER_TYPE` (12). A Bash command that imports
-`epistemic_monitor` and passes `by`/`source="user"` or calls `.confirm(` is refused by the authority check. One that
-calls a store mutator is flagged by `selfguard` (advisory). When `LedgerStore` replays `ledger.jsonl` into an empty
-index, it records `index_rebuilt` in project state. The next PreToolUse or SessionStart tells the user once, naming
-the user-authority entries that the replay left inactive.
+`ledger calibrate --min-labels` is floored at `MIN_LABELS_PER_TYPE` (12). A Bash command that runs the
+`epistemic_monitor` package in an interpreter (`python -c`, `python - <<`) with a `"user"` literal is refused by the
+authority check, and one that calls a store mutator is flagged by `selfguard` (advisory). This is a speed bump, not a
+boundary. When `LedgerStore` replays `ledger.jsonl` into an empty index, it records `index_rebuilt` in project state.
+The next PreToolUse or SessionStart tells the user once, listing every replayed event that retired, superseded,
+demoted or rescoped a user-authority entry, newest first.

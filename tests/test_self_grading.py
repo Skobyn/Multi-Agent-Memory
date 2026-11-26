@@ -96,6 +96,25 @@ def test_inprocess_store_write_is_flagged(cfg):
     assert selfguard.protected_target("Bash", {"command": agentish}, cfg)
 
 
+def test_inprocess_variants_are_refused():
+    for cmd in ("python3 -c 'import os, epistemic_monitor.store as s; s.LedgerStore(c).retire(\"C-1\", \"x\", by=\"user\")'",
+                "python3 -c '__import__(\"epistemic_monitor.store\").LedgerStore(c).supersede(\"C-1\", None, \"x\", \"user\")'",
+                "python3 -c 'from epistemic_monitor . store import LedgerStore as L; getattr(L(c), \"confirm\")(\"D-1\", \"user\")'"):
+        assert authority.check(cmd, "", set())[0], cmd
+
+
+def test_ordinary_development_is_not_refused(cfg):
+    for cmd in ("grep -rnE 'import epistemic_monitor|by=\"user\"' src tests",
+                "git commit -m 'block import epistemic_monitor + by=\"user\" in Bash'",
+                "cat > tests/test_new.py <<'EOF'\nfrom epistemic_monitor.store import LedgerStore\n"
+                "def test_x(store):\n    store.confirm('D-0001', by='user')\nEOF",
+                "python3 -c 'import epistemic_monitor, click; click.confirm(\"ok?\")'",
+                "python3 -m pytest -q tests/test_store.py"):
+        assert authority.check(cmd, "", set())[0] is None, cmd   # never denied
+        if "click" not in cmd:   # an advisory on `click.confirm(` next to the import is accepted
+            assert selfguard.protected_target("Bash", {"command": cmd}, cfg) is None, cmd
+
+
 def test_inprocess_reads_are_not_flagged(cfg):
     for cmd in ("python3 -c 'import epistemic_monitor; print(1)'",
                 "python3 -c 'from epistemic_monitor.store import LedgerStore; print(LedgerStore(c).count_entries())'",
@@ -124,7 +143,7 @@ def test_rebuild_is_reported_once_naming_inactive_user_rules(cfg, monkeypatch, s
     out = _run("pre_tool_use", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, cfg)
     assert "rebuilt from ledger.jsonl" in out["systemMessage"] and c.id in out["systemMessage"]
     rec = _logged(cfg, "index_rebuilt")[-1]
-    assert any(x.startswith(c.id) for x in rec["user_inactive"])
+    assert rec["user_changes"][0].startswith(f"{c.id} superseded by user")
     again = _run("pre_tool_use", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, cfg)
     assert "rebuilt" not in ((again or {}).get("systemMessage") or "")
 
@@ -136,6 +155,27 @@ def test_rebuild_seen_by_cli_is_reported_at_next_hook(cfg, monkeypatch, store):
     LedgerStore(cfg).close()   # the CLI's store replays the ledger
     out = _run("session_start", {"source": "startup"}, cfg)
     assert c.id in out["systemMessage"]
+
+
+def test_rebuild_reports_a_forged_demotion_newest_first(cfg, monkeypatch, store):
+    """A forged entry_update can strip a rule's authority or scope while leaving it active (diff review)."""
+    _offline(monkeypatch)
+    old = [make_entry(store, type="constraint", statement=f"Never edit dir{i}/") for i in range(14)]
+    for e in old:
+        store.retire(e.id, "done", by="user")
+    c = make_entry(store, type="constraint", statement="Never edit vendor/")
+    store.close()
+    prov = {"source": "agent", "confirmed_by_user": False, "session_id": "s1"}
+    with open(cfg.ledger_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"event": "entry_update", "id": c.id, "fields": {"provenance": prov}}) + "\n")
+    conn = sqlite3.connect(str(cfg.index_path))
+    with conn:
+        conn.execute("DELETE FROM entries")
+    conn.close()
+    out = _run("pre_tool_use", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, cfg)
+    msg = out["systemMessage"]
+    assert f"{c.id} changed provenance" in msg and msg.index(c.id) < msg.index(old[-1].id)
+    assert "and 3 older" in msg and "No user rule" not in msg
 
 
 def test_normal_open_sets_no_rebuild(cfg, monkeypatch, store):
