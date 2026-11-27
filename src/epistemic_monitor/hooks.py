@@ -654,7 +654,11 @@ def post_tool_use_agent(payload: dict[str, Any], cfg: Config, store: LedgerStore
     for eid, d in sorted(missing.items()):
         what = ", ".join(f"{n}x {'denied' if k == 'deny' else 'flagged'}" for k, n in sorted(d.items()))
         e = by_id.get(eid)
-        lines.append(f"- {eid} ({what})" + (f": {e.statement[:160]}" if e else " (a ledger command that needs the user)"))
+        line = f"- {eid} ({what})" + (f": {e.statement[:160]}" if e else " (a ledger command that needs the user)")
+        if e is not None and e.status != "active":
+            # a rule superseded while the subagent ran must not read as binding (version confusion, 2611.34762)
+            line += f" [now {e.status}, no longer binding" + (f"; replaced by {e.superseded_by}" if e.superseded_by else "") + "]"
+        lines.append(" ".join(line.split()))
     return hooklib.additional_context(
         "post_tool_use",
         f"Epistemic monitor: the {resp.get('agentType') or 'sub'} agent's tool calls were stopped by these ledger "

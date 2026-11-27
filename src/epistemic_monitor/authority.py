@@ -30,6 +30,12 @@ _CLI_RE = re.compile(r"em-hook|epistemic_monitor|(?:^|[\s;&|(`'\"/])em\s+ledger\
 _LEDGER_RE = re.compile(r"\bledger\b")
 # confirm; --user and its argparse abbreviations (--u, --us, --use); --by user / --by=user and abbreviations (--b)
 _MARKER_RE = re.compile(r"\bconfirm\b|--u(?:s(?:er?)?)?(?![\w-])|--by?(?:=|\s+)['\"]?user\b", re.IGNORECASE)
+# Subcommands that only the user may run, matched by name rather than a marker (review 2026-11-27, after PROVE,
+# arXiv 2611.34215: a verifier fed outcome feedback drifts into accepting what it should refuse). `label` and
+# `calibrate` set the decision model's per-type thresholds for every later session, so an agent that labels its own
+# denied call "ok" and recalibrates would loosen the gate on the user's rules. `mark-good` feeds a quantile the gate
+# does not read yet; it joins this set when it does.
+_USER_ONLY_CMDS = frozenset({"label", "calibrate"})
 _HOOK_UPS_RE = re.compile(r"\bhook\b.*user[_-]prompt[_-]submit", re.IGNORECASE | re.DOTALL)
 _LEDGER_ARGS_RE = re.compile(r"<command-name>/?(?:[\w.-]+:)?ledger</command-name>\s*<command-args>(.*?)</command-args>",
                              re.DOTALL)
@@ -175,6 +181,14 @@ def only_ledger(command: str) -> bool:
     return True
 
 
+def _subcommand(inv: tuple[str, ...]) -> str:
+    return next((t for t in inv if not t.startswith("-")), "")
+
+
+def _user_only(inv: tuple[str, ...]) -> bool:
+    return bool(_MARKER_RE.search(" ".join(inv))) or _subcommand(inv) in _USER_ONLY_CMDS
+
+
 def granted_invocations(user_text: str) -> list[tuple[str, ...]]:
     """Ledger commands the user's own turn spells out: a ``/ledger`` slash command, or a pasted CLI line (one line;
     a line whose quotes do not balance grants nothing)."""
@@ -195,11 +209,13 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     if _HOOK_UPS_RE.search(command):
         return ("Epistemic monitor: running the user_prompt_submit hook by hand would apply SUPERSEDE lines with the "
                 "user's authority. Claude Code runs hooks itself; do not run it from Bash."), []
-    if not (_LEDGER_RE.search(command) and _MARKER_RE.search(command)):
+    if not _LEDGER_RE.search(command):
+        return None, []
+    wanted = [inv for inv in invocations(command) if _user_only(inv)]
+    if not (_MARKER_RE.search(command) or wanted):
         return None, []
     used = used or set()
     granted = granted_invocations(last_user_text or "")
-    wanted = [inv for inv in invocations(command) if _MARKER_RE.search(" ".join(inv))]
     ok = bool(wanted) and all(inv in granted and inv not in used for inv in wanted)
     if ok and expands(command):
         return ("Epistemic monitor: this ledger command acts with the user's authority, and the shell would expand "
@@ -208,7 +224,7 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     if ok:
         return None, wanted
     shown = " ".join(wanted[0]) if wanted else "<subcommand> <id> ..."
-    return ("Epistemic monitor: this ledger command acts with the user's authority (`confirm`, `--user` or "
-            "`--by user`), and the user's latest message does not contain this exact command (or it already ran). "
+    return ("Epistemic monitor: this ledger command acts with the user's authority (`confirm`, `--user`, "
+            "`--by user`, or `label`/`calibrate`, which set the gate's thresholds), and the user's latest message does not contain this exact command (or it already ran). "
             "Only the user can grant that. Do not retry or rephrase it; ask them, and if they want it they can type "
             f"`/ledger {shown}` themselves (or `SUPERSEDE <id>: <reason>` to change a decision)."), []
