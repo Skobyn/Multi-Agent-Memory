@@ -142,9 +142,17 @@ def expands(text: str) -> bool:
     return False
 
 
+def _dequoted(command: str) -> str:
+    """The command with shell quotes removed, so `em "ledger" label` and `em led''ger label` read as what runs."""
+    try:
+        return " ".join(shlex.split(command))
+    except ValueError:
+        return command
+
+
 def needs_check(command: str) -> bool:
     """Cheap pre-test: does this Bash command touch the plugin CLI at all?"""
-    return bool(command) and bool(_CLI_RE.search(command))
+    return bool(command) and bool(_CLI_RE.search(command) or _CLI_RE.search(_dequoted(command)))
 
 
 def invocations(command: str) -> list[tuple[str, ...]]:
@@ -186,7 +194,9 @@ def _subcommand(inv: tuple[str, ...]) -> str:
 
 
 def _user_only(inv: tuple[str, ...]) -> bool:
-    return bool(_MARKER_RE.search(" ".join(inv))) or _subcommand(inv) in _USER_ONLY_CMDS
+    sub = _subcommand(inv)
+    # a subcommand the shell computes (`em ledger $L t ok`) cannot be read here; only a user's exact line runs it
+    return bool(_MARKER_RE.search(" ".join(inv))) or sub in _USER_ONLY_CMDS or "$" in sub or "`" in sub
 
 
 def granted_invocations(user_text: str) -> list[tuple[str, ...]]:
@@ -209,7 +219,7 @@ def check(command: str, last_user_text: str | None, used: set[tuple[str, ...]] |
     if _HOOK_UPS_RE.search(command):
         return ("Epistemic monitor: running the user_prompt_submit hook by hand would apply SUPERSEDE lines with the "
                 "user's authority. Claude Code runs hooks itself; do not run it from Bash."), []
-    if not _LEDGER_RE.search(command):
+    if not (_LEDGER_RE.search(command) or _LEDGER_RE.search(_dequoted(command))):
         return None, []
     wanted = [inv for inv in invocations(command) if _user_only(inv)]
     if not (_MARKER_RE.search(command) or wanted):

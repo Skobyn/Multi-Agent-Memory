@@ -6,6 +6,7 @@ Deterministic, sub-millisecond, conservative: ambiguity resolves toward
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shlex
@@ -33,10 +34,6 @@ RULES: list[tuple[str, str]] = [
     ("delete",         r'\brm\s+(?:-[a-zA-Z]+\s+)*' + _PATH),
     ("touch_truncate", r'\b(?:touch|truncate\s+-s\s*\d+)\s+' + _PATH),
     ("dd",             r'\bdd\b.*\bof=' + _PATH),
-    # (?s): a heredoc body (`python3 - <<EOF`) sits on the lines after the interpreter (review 2026-11-27)
-    ("py_write",       r'(?s)\bpython3?\b.*?(?:\bopen\([^)]*,\s*[\'"][wa]\+?[\'"]|\.write_(?:text|bytes)\(|'
-                       r'\bos\.(?:remove|unlink|rename|replace)\(|\bshutil\.(?:move|copy\w*|rmtree)\()'),
-    ("node_write",     r'(?s)\bnode\b.*?\b(?:writeFileSync|writeFile|appendFileSync|unlinkSync|rmSync|renameSync)\('),
     ("find_delete",    r'\bfind\b[^;&|\n]*\s-(?:delete|exec\s+rm)\b'),
 ]
 _COMPILED = [(name, re.compile(rx)) for name, rx in RULES]
@@ -64,11 +61,22 @@ class Classification:
 # restore) or string literals (python3 -c "open('x','w')"). Without them a `path_glob_forbidden` falsifier never
 # tripped on a one-step Bash write (review 2026-11-27).
 _ARG_RULES = {"sed_inplace", "perl_inplace", "formatter", "patch_apply", "git_worktree", "codemod", "find_delete"}
-_LITERAL_RULES = {"py_write", "node_write"}
+# An interpreter at command position (not a word in a commit message): python/node with inline code (-c/-e, or a
+# heredoc). Its writes are looked for only inside that command's own extent (review 2026-11-27).
+_CMD_POS = r'(?:^|(?<=[;&|(\n])|(?<=&&)|(?<=\|\|))\s*(?:(?:env|sudo|exec|time|nohup|command)\s+(?:-\S+\s+)*)*(?:uv\s+run\s+|poetry\s+run\s+)?'
+_INTERP = {
+    "py_write": (re.compile(_CMD_POS + r'(?:[\w.~-]*/){0,8}python(?:3(?:\.\d+)?)?\b'),
+                 re.compile(r'\bopen\([^)]{0,300}?,\s*(?:mode\s*=\s*)?[rbf]?[\'"][rbt+]*[wax]|\.write_(?:text|bytes)\(|'
+                            r'\bos\.(?:remove|unlink|rename|replace|truncate)\(|\bshutil\.(?:move|copy\w*|rmtree)\(|'
+                            r'\.(?:unlink|touch|rmdir)\(')),
+    "node_write": (re.compile(_CMD_POS + r'(?:[\w.~-]*/){0,8}node\b'),
+                   re.compile(r'\b(?:writeFileSync|writeFile|appendFileSync|unlinkSync|rmSync|renameSync)\(')),
+}
+_HEREDOC = re.compile(r'<<-?\s*([\'"]?)([A-Za-z_][\w.-]*)\1')
 _SEGMENT_END = re.compile(r'&&|\|\||[;|&\n]')
 _Q = r'[rbf]?([\'"])([^\'"\n]+)\1'
 _LITERAL_RXS = [  # (regex, groups holding a written path); a read-only open('x') is not a write
-    (re.compile(r'\bopen\(\s*' + _Q + r'\s*,\s*(?:mode\s*=\s*)?[rbf]?[\'"][rbt]*[wax]'), (2,)),
+    (re.compile(r'\bopen\(\s*' + _Q + r'\s*,\s*(?:mode\s*=\s*)?[rbf]?[\'"][rbt+]*[wax]'), (2,)),
     (re.compile(r'\bPath\(\s*' + _Q + r'\s*\)\s*\.\s*(?:write_text|write_bytes|unlink|rename|replace|touch|rmdir)\b'), (2,)),
     (re.compile(r'\bos\.(?:remove|unlink|truncate)\(\s*' + _Q), (2,)),
     (re.compile(r'\b(?:os\.(?:rename|replace)|shutil\.move)\(\s*' + _Q + r'\s*,\s*' + _Q), (2, 4)),
@@ -81,7 +89,10 @@ _PATHLIKE = re.compile(r'^[~.$A-Za-z0-9_/][^\s*?]*(?:/|\.[A-Za-z0-9]+)$|^[A-Za-z
 _SUBCOMMANDS = {"format", "check", "apply", "am", "restore", "checkout", "revert", "cherry-pick", "merge", "rebase",
                 "stash", "pop", "reset", "git", "ruff", "biome", "npx"}
 _OPT_WITH_ARG = {"<", ">", "--source", "-s", "--config", "-c", "-name", "-iname", "-type", "-path", "-o", "-e", "-f",
-                 "--expression", "--file", "-p"}
+                 "--expression", "--file", "-p", "--exclude", "--extend-exclude", "--force-exclude", "--skip",
+                 "--skip-glob", "--settings-path", "--settings-file", "--ignore-path", "--ext", "--stdin-filename",
+                 "-l", "--line-length", "--select", "--ignore", "--extend-select", "--target-version", "-t",
+                 "--include", "--parser", "--plugin", "-m", "--message"}
 
 
 def _tokens(segment: str) -> list[str]:
@@ -95,7 +106,7 @@ def _arg_paths(rule: str, command: str, start: int) -> list[str]:
     """Positional file arguments of the simple command a rule matched. Best effort: a path it misses is a falsifier
     that does not trip, which is today's behaviour; a non-path it keeps can only match a glob that names it."""
     end = _SEGMENT_END.search(command, start)
-    toks = _tokens(command[start:end.start() if end else len(command)])[1:]  # drop the program
+    toks = [t for t in _tokens(command[start:end.start() if end else len(command)])[1:] if t]  # drop the program; BSD `-i ''`
     if rule in ("sed_inplace", "perl_inplace"):
         script_given = False
         positional: list[str] = []
@@ -115,8 +126,12 @@ def _arg_paths(rule: str, command: str, start: int) -> list[str]:
             i += 1
         files = positional if script_given else positional[1:]  # sed's first positional is its script
         return [p for p in files if not _is_non_source(p)]
-    if rule == "git_worktree" and "--" in toks:
-        return [p for p in toks[toks.index("--") + 1:] if not _is_non_source(p)]
+    if rule == "git_worktree":  # branch names are not paths: only after `--`, or the positionals of `restore`
+        if "--" in toks:
+            return [p for p in toks[toks.index("--") + 1:] if not _is_non_source(p)]
+        if "restore" not in toks:
+            return []
+        toks = toks[toks.index("restore") + 1:]
     out: list[str] = []
     skip = False
     for t in toks:
@@ -135,6 +150,54 @@ def _arg_paths(rule: str, command: str, start: int) -> list[str]:
     return out
 
 
+def _extent(command: str, start: int) -> str:
+    """The text of the simple command starting at ``start``: to the first unquoted ; & | or newline, or, when it
+    opens a heredoc, through the heredoc's terminator line."""
+    quote: str | None = None
+    i, n = start, len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 2
+            continue
+        elif c in ";&|\n":
+            break
+        i += 1
+    head = command[start:i]
+    m = _HEREDOC.search(head)
+    if m and i < n and command[i] == "\n":
+        term = re.compile(r'^\t*' + re.escape(m.group(2)) + r'\s*$', re.MULTILINE)
+        t = term.search(command, i + 1)
+        return command[start:t.end() if t else n]
+    return head
+
+
+def _interp_writes(command: str) -> tuple[list[str], list[str]]:
+    rules: list[str] = []
+    paths: list[str] = []
+    for name, (start_rx, write_rx) in _INTERP.items():
+        pos = 0
+        while True:
+            m = start_rx.search(command, pos)
+            if not m:
+                break
+            body = _extent(command, m.end())
+            pos = m.end() + max(len(body), 1)
+            if write_rx.search(body):
+                if name not in rules:
+                    rules.append(name)
+                paths.extend(_literal_paths(body))
+    return rules, paths
+
+
 def _literal_paths(command: str) -> list[str]:
     out: list[str] = []
     for rx, groups in _LITERAL_RXS:
@@ -145,8 +208,8 @@ def _literal_paths(command: str) -> list[str]:
 
 # `bash x.sh`, `sh -e x.sh`, `source x.sh`, `. x.sh`, `./x.sh`: a script whose writes are not in the command text
 # (2611.19764: individually harmless steps chained through a workspace file).
-_SCRIPT_RUN = re.compile(r'(?:^|[;&|(]\s*|\s)(?:(?:ba|z|da)?sh\s+(?:-[a-zA-Z]+\s+)*|source\s+|\.\s+)?'
-                         r'(?P<s>(?:\./|/|~/)?[^\s;|&<>()\'"`$]+\.(?:sh|bash))(?![\w.])')
+_SCRIPT_RUN = re.compile(_CMD_POS + r'(?:(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-[a-zA-Z]+\s+)*(?P<s>[^\s;|&<>()\'"`$]+\.(?:sh|bash))'
+                         r'|(?P<d>(?:\./|/|~/)[^\s;|&<>()\'"`$]+\.(?:sh|bash)))(?![\w.])')
 _SCRIPT_MAX_BYTES = 64 * 1024
 
 
@@ -155,7 +218,7 @@ def script_write_paths(command: str, cwd: str) -> list[str]:
     64 KB with no NUL byte in its first 4 KB; comment lines are dropped, so a commented-out `rm` does not count."""
     out: list[str] = []
     for m in _SCRIPT_RUN.finditer(command):
-        name = os.path.expanduser(m.group("s"))
+        name = os.path.expanduser(m.group("s") or m.group("d"))
         path = name if os.path.isabs(name) else os.path.join(cwd or ".", name)
         try:
             if not os.path.isfile(path) or os.path.getsize(path) > _SCRIPT_MAX_BYTES:
@@ -178,8 +241,17 @@ def _is_non_source(path: str) -> bool:
 
 
 def classify(command: str) -> Classification:
+    c = _classify(command)  # cached: the gate classifies one command several times per call
+    return Classification(c.verdict, list(c.rules), list(c.paths))
+
+
+@functools.lru_cache(maxsize=128)
+def _classify(command: str) -> Classification:
     hits: list[str] = []
     paths: list[str] = []
+    ih, ip = _interp_writes(command)
+    hits.extend(ih)
+    paths.extend(ip)
     for name, rx in _COMPILED:
         for m in rx.finditer(command):
             p = m.groupdict().get("p") if m.groupdict() else None
@@ -190,8 +262,6 @@ def classify(command: str) -> Classification:
                 paths.append(p)
             elif name in _ARG_RULES:
                 paths.extend(_arg_paths(name, command, m.start()))
-            elif name in _LITERAL_RULES:
-                paths.extend(_literal_paths(command[m.start():]))
     if hits:
         return Classification(WRITES_SOURCE, sorted(set(hits)), sorted(set(paths)))
     if _OPAQUE.search(command) and not _READONLY.match(command):

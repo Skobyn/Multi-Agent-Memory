@@ -188,3 +188,52 @@ def test_handoff_marks_rule_superseded_while_subagent_ran(cfg, store, monkeypatc
     resp = {"agentId": "a1", "agentType": "general-purpose", "content": [{"type": "text", "text": "Done."}]}
     ctx = _run("post_tool_use_agent", {"tool_name": "Agent", "tool_response": resp}, cfg)["hookSpecificOutput"]["additionalContext"]
     assert "D-0001" in ctx and "no longer binding" in ctx and f"replaced by {new.id}" in ctx
+
+
+# ------------------------------------------------------------------ second round: review of the finished diff
+@pytest.mark.parametrize("command", ["cat fix.sh", "shellcheck fix.sh", "grep -n sed fix.sh", "git diff fix.sh",
+                                     "chmod +x fix.sh", "git add fix.sh && git commit -m 'add fix'",
+                                     "cp fix.sh /tmp/backup.sh"])
+def test_naming_a_script_is_not_running_it(store, tmp_path, command):
+    _auth_rule(store)
+    (tmp_path / "fix.sh").write_text("sed -i 's/a/b/' src/auth.py\n")
+    r = _bash(store, tmp_path, command)
+    assert r.trips == [] and r.change.via_script == []
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m \"python3 helper: drop os.remove('src/auth.py') call\"",
+    "gh pr create --body \"python3 now uses Path('src/auth.py').write_text(...)\"",
+    "python3 x.py; git commit -m \"os.remove('src/auth.py')\"",
+    "ruff check --fix --exclude src/auth.py src",
+    "git merge src/auth.py",
+])
+def test_prose_excludes_and_branches_are_not_targets(store, tmp_path, command):
+    _auth_rule(store)
+    assert _bash(store, tmp_path, command).trips == []
+
+
+def test_bsd_sed_empty_suffix_and_git_restore_source():
+    assert classify("sed -i '' 's/a/b/' src/x.py").paths == ["src/x.py"]
+    assert classify("git restore --source HEAD~1 src/auth.py").paths == ["src/auth.py"]
+    assert classify("git rebase origin/main").paths == []
+
+
+def test_heredoc_extent_ends_at_its_terminator():
+    r = classify("python3 - <<EOF\nopen('src/a.py','w')\nEOF\ngit commit -m \"open('src/b.py','w')\"")
+    assert r.paths == ["src/a.py"]
+
+
+@pytest.mark.parametrize("command", ["python3 -c \"" + "open(x" * 20000 + "\"", "python3 " + "open('a', " * 10000,
+                                     "python3 - <<EOF\n" + "open('f.txt','w')  # python3\n" * 1500 + "EOF",
+                                     "(" * 100000, ";python3 " * 20000])
+def test_large_commands_classify_fast(command):
+    import time
+    t = time.time()
+    classify(command)
+    assert time.time() - t < 1.5
+
+
+@pytest.mark.parametrize("cmd", ['em "ledger" label t ok', "em led''ger label t ok", "L=label; em ledger $L t ok"])
+def test_quoted_or_computed_ledger_subcommand_is_refused(cmd):
+    assert authority.check(cmd, "fix the parser bug")[0]
