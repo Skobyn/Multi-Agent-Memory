@@ -876,3 +876,14 @@ settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-fa
 as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
 gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
 unverified user quotes.
+
+## Addendum (2026-11-27): Bash write targets, user-only calibration
+
+From `docs/RESEARCH-2026-11-27.md` (2611.19764, 2611.34215, 2611.34762). A Bash call's write targets
+(`Change.targets`) include the positional file arguments of in-place editors, formatters, `git checkout --` /
+`restore` and `patch`, and the written path literals of inline python/node code (heredocs included). Each target is
+normalized to the cwd-relative spelling a glob uses, and the write targets of a local shell script the command runs
+are added (one level deep, at most 64 KB, comment lines dropped). Path falsifiers and path scopes read only these
+targets. `ledger label` and `ledger calibrate` act with the user's authority, like `confirm`. Calibration keeps one
+label per tool call, the last one. A subagent handoff marks a rule that was superseded while the subagent ran as no
+longer binding.

@@ -149,11 +149,26 @@ def fit_quantile(session_max_scores: list[float], alpha: float = 0.05) -> float 
     return round(xs[k], 3)
 
 
+def dedupe_labels(labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One label per tool call, the last one written: relabelling a call corrects it, and the same call labelled
+    twelve times is one sample, not enough on its own to move a threshold (review 2026-11-27)."""
+    last: dict[str, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
+    for lab in labels:
+        tid = lab.get("tool_use_id")
+        if tid:
+            last.pop(str(tid), None)
+            last[str(tid)] = lab
+        else:
+            unkeyed.append(lab)
+    return unkeyed + list(last.values())
+
+
 def calibrate(cfg: Config, gate_records: list[dict[str, Any]], max_false_deny: float = 0.02,
               alpha: float = 0.05, min_labels: int = MIN_LABELS_PER_TYPE) -> Calibration:
     """Fit from labels (each: {tool_use_id, label: conflict|ok, scores: {entry_id: p}, types: {entry_id: type}})
     and from gate records of known-good sessions (shadow scores)."""
-    labels = read_labels(cfg)
+    labels = dedupe_labels(read_labels(cfg))
     by_type: dict[str, list[tuple[float, bool]]] = {}
     for lab in labels:
         is_conflict = lab.get("label") == "conflict"

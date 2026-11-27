@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .bash_classifier import WRITES_SOURCE, Classification, classify
+from .bash_classifier import WRITES_SOURCE, Classification, classify, script_write_paths
 from .schema import Entry
 
 EXTRACTION_INFLIGHT = "extraction_inflight"  # session state: start time of a running prompt extraction, 0 when idle
@@ -67,12 +67,14 @@ class Change:
     text: str = ""
     command: str = ""
     is_new_file: bool = False
+    targets: list[str] = field(default_factory=list)   # Bash: normalized write targets, scripts it runs included
+    via_script: list[str] = field(default_factory=list)  # the subset that came from reading a script it runs
 
     @property
     def is_mutating(self) -> bool:
         if self.tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
             return True
-        return self.tool == "Bash" and classify(self.command).verdict == WRITES_SOURCE
+        return self.tool == "Bash" and (bool(self.via_script) or classify(self.command).verdict == WRITES_SOURCE)
 
     def fingerprint(self) -> str:
         return hashlib.sha1(f"{self.tool}|{self.path}|{self.text[:4000]}".encode()).hexdigest()[:12]
@@ -136,11 +138,36 @@ def _rel(path: str, cwd: str) -> str:
         return path
 
 
+_PWD_PREFIX = re.compile(r'^(?:\$PWD|\$\{PWD\}|"\$PWD"|\$\(pwd\))/')
+
+
+def _norm_target(path: str, cwd: str) -> str:
+    """A Bash write target in the form a glob is written in: `./src/a.py`, `$PWD/src/a.py` and `<cwd>/src/a.py` all
+    become `src/a.py`. Before this, only the bare relative spelling could trip a `path_glob_forbidden` falsifier."""
+    p = _PWD_PREFIX.sub("", path.strip("'\""))
+    p = _rel(p, cwd) if cwd else p
+    if p.startswith("~"):
+        return p
+    n = os.path.normpath(p)
+    return n if n != "." else p
+
+
+def bash_targets(command: str, cwd: str) -> tuple[list[str], list[str]]:
+    direct = [_norm_target(p, cwd) for p in classify(command).paths]
+    via = [t for t in (_norm_target(p, cwd) for p in script_write_paths(command, cwd)) if t not in direct]
+    seen: list[str] = []
+    for t in direct + via:
+        if t not in seen:
+            seen.append(t)
+    return seen, list(dict.fromkeys(via))
+
+
 def change_from_tool_input(tool: str, tool_input: dict[str, Any], cwd: str) -> Change:
     ti = tool_input or {}
     if tool == "Bash":
         cmd = str(ti.get("command", ""))
-        return Change(tool=tool, text=cmd, command=cmd)
+        targets, via = bash_targets(cmd, cwd)
+        return Change(tool=tool, text=cmd, command=cmd, targets=targets, via_script=via)
     path = _rel(str(ti.get("file_path") or ti.get("notebook_path") or ""), cwd)
     if tool == "Write":
         abs_path = Path(cwd) / path if path and not os.path.isabs(path) else Path(path or "")
@@ -165,7 +192,7 @@ def entry_in_scope(entry: Entry, change: Change) -> bool:
     if entry.scope.paths:
         targets = [change.path] if change.path else []
         if change.tool == "Bash":
-            targets = classify(change.command).paths
+            targets = change.targets
         if not targets:
             return False
         return any(_match_glob(t, g) for t in targets for g in entry.scope.paths)
@@ -184,10 +211,11 @@ def evaluate_falsifiers(entry: Entry, change: Change, cwd: str, history: list[di
                     and not re.search(f["pattern"], change.text, re.MULTILINE):
                 trips.append(Trip(entry.id, kind, f"required pattern {f['pattern']!r} missing from new file"))
             elif kind == "path_glob_forbidden":
-                paths = [change.path] if change.path else (classify(change.command).paths if change.tool == "Bash" else [])
+                paths = [change.path] if change.path else (change.targets if change.tool == "Bash" else [])
                 for p in paths:
                     if _match_glob(p, f["glob"]):
-                        trips.append(Trip(entry.id, kind, f"path {p} matches forbidden glob {f['glob']}"))
+                        how = " (written by a script this command runs)" if p in change.via_script else ""
+                        trips.append(Trip(entry.id, kind, f"path {p}{how} matches forbidden glob {f['glob']}"))
             elif kind == "path_glob_required_with" and change.tool == "Write" and change.is_new_file and change.path \
                     and _match_glob(change.path, f["glob"]):
                 companion = f["requires"].replace("{stem}", Path(change.path).stem)

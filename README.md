@@ -217,5 +217,9 @@ python3 -I bin/em-hook ledger mark-good <session_id>   # a session you know was 
 python3 -I bin/em-hook ledger calibrate        # per-type thresholds, false-deny ceiling 2%
 ```
 
+`label` and `calibrate` set the thresholds that guard your rules in every later session, so they act with your
+authority: run them yourself, or type `/ledger label <tool_use_id> ok` (or `/ledger calibrate`) in Claude Code. The
+agent cannot run them on its own, and a call labelled more than once counts once (its last label).
+
 Transcript fixtures under `tests/fixtures/` cover Claude Code 2.1.311 and the older
 `compact_boundary` format; the reader is defensive because the format is undocumented.

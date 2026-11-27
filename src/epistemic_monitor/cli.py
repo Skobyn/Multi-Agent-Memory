@@ -243,9 +243,9 @@ def ledger(argv: list[str]) -> int:
             from .doctor import main as doctor_main
             return doctor_main([])
         elif args.cmd == "feedback":
-            from .calibration import read_labels
+            from .calibration import dedupe_labels, read_labels
             from .feedback import feedback_report
-            rep = feedback_report(store.recent_interventions(20000), read_labels(cfg), args.min_flags)
+            rep = feedback_report(store.recent_interventions(20000), dedupe_labels(read_labels(cfg)), args.min_flags)
             for r in rep["candidates_for_review"]:
                 print(f"review   {r['entry']}  flagged {r['flags']}x, then superseded by the user")
             for r in rep["tighten"]:
