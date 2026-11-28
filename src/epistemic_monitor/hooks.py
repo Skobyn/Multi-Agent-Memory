@@ -24,14 +24,14 @@ from .audit import behavior_watch, dropped_by_entailment, entailment_audit, stal
 from .config import Config
 from .decision_model import make_decision_model
 from .embeddings import make_embedder
-from .extractor import Extractor
+from .extractor import Extractor, one_line
 from .calibration import load_calibration
 from .gate import EXTRACTION_INFLIGHT, GatePipeline
 from .llm import make_llm
 from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
 from .transcript import (KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, looks_injected, own_words, read_turns,
-                         rows_to_turns)
+                         rows_to_turns, split_own_words)
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
 
@@ -148,13 +148,29 @@ def _last_human_text(transcript_path: str | None, max_bytes: int = 400_000) -> s
 
 
 def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
+    """The recent trajectory for the gate advisor, one line per turn. Only a human turn is labelled ``[user]``: a
+    harness-injected turn (an external event, a peer or subagent message, a task notification) is ``[injected]``,
+    and envelope, peer, fenced and ``>``-quoted text inside a user turn (``split_own_words``) is split out onto its
+    own ``[quoted or injected]`` line. Every body is
+    flattened to one line, so no text can open a ``[user]:`` line of its own. The advisor's ``consistent`` verdict
+    clears model flags, so third-party text read as the user could otherwise talk it out of a rule (arXiv
+    2611.32194: an authorizer that cannot see who wrote which bytes grants what the forger wrote)."""
     lines = []
     for t in _tail_turns(transcript_path)[-(max_turns * 3):]:
         if t.kind in (KIND_USER_TEXT, KIND_ASSISTANT_TEXT) and t.text.strip():
-            lines.append(f"[{t.role}]: {t.text.strip()[:600]}")
+            if t.kind == KIND_ASSISTANT_TEXT:
+                lines.append(f"[assistant]: {one_line(t.text)[:600]}")
+            elif not t.is_human:
+                lines.append(f"[injected]: {one_line(t.text)[:600]}")
+            else:
+                own, quoted = split_own_words(t.text)
+                if one_line(own):
+                    lines.append(f"[user]: {one_line(own)[:600]}")
+                if one_line(quoted):
+                    lines.append(f"[quoted or injected]: {one_line(quoted)[:600]}")
         elif t.kind == "tool_use":
             brief = (t.tool_input or {}).get("file_path") or (t.tool_input or {}).get("command") or ""
-            lines.append(f"[tool {t.tool_name}]: {str(brief)[:200]}")
+            lines.append(f"[tool {one_line(t.tool_name)}]: {one_line(brief)[:200]}")
     return "\n".join(lines[-max_turns:])
 
 
