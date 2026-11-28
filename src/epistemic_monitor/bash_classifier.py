@@ -75,3 +75,63 @@ def classify(command: str) -> Classification:
     if _OPAQUE.search(command) and not _READONLY.match(command):
         return Classification(UNKNOWN, ["opaque"], [])
     return Classification(NO_SOURCE_WRITE, [], [])
+
+
+# --- does a command RUN something matching a pattern? (process falsifiers, RESEARCH-2026-11-28) -----------------------
+# `command_requires_prior` matched its regexes against the raw command text, so `echo pytest`, `grep -r pytest .` or
+# `git log --grep pytest` counted as the tests having run and cleared the next commit without a model call (SkillCFI,
+# arXiv 2611.24185: an obligation is enforceable only on evidence that crosses the tool boundary). The same text match
+# made `grep -r "git commit" .` demand a prior test run. A segment whose program only prints, searches or reads text
+# does not run what it names. Anything else (bash -c, xargs, docker run, make) still counts: this errs toward
+# matching, which keeps a doubtful prior step satisfied and a doubtful trigger live, as before.
+_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&\n`]|\$\(|\(|\)")
+_INERT_PROGRAMS = frozenset({
+    "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "less", "more", "head", "tail", "man",
+    "which", "whereis", "type", "history", "ls", "wc", "sort", "uniq", ":", "true", "false", "#",
+})
+_INERT_GIT = frozenset({"log", "show", "grep", "blame", "diff", "status", "branch", "tag", "notes", "config", "help",
+                        "reflog", "shortlog"})
+_PREFIX_WORDS = frozenset({"sudo", "time", "nice", "nohup", "exec", "command", "builtin", "env", "then", "do",
+                           "else", "!", "{"})
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# flags that make a test or build runner list, explain or describe instead of run
+_DRY_FLAGS = frozenset({"--co", "--collect-only", "--help", "-h", "--version", "-V", "--dry-run"})
+
+
+def _program(words: list[str]) -> tuple[str, list[str]]:
+    i = 0
+    while i < len(words) and (words[i] in _PREFIX_WORDS or _ASSIGNMENT.match(words[i])):
+        i += 1
+    rest = words[i:]
+    return (rest[0].rsplit("/", 1)[-1] if rest else ""), rest[1:]
+
+
+def segment_is_inert(segment: str) -> bool:
+    """True when the segment's program only prints, searches or reads text, or a runner is asked for a dry mode."""
+    words = segment.split()
+    prog, args = _program(words)
+    if not prog or prog.startswith("#"):
+        return True
+    if prog in _INERT_PROGRAMS:
+        return True
+    if prog == "git":
+        sub = next((a for a in args if not a.startswith("-")), "")
+        return sub in _INERT_GIT
+    return any(a in _DRY_FLAGS for a in args)
+
+
+def runs_matching(command: str, pattern: str) -> bool:
+    """Does ``command`` run something that ``pattern`` matches? The pattern is tried against each shell segment
+    (split on ; && || | & newlines, subshells and substitutions) whose program is not inert. A pattern that matches
+    no single segment but does match the whole command (it spans an operator) falls back to the whole-text match.
+    Raises ``re.error`` on a bad pattern, as ``re.search`` does."""
+    rx = re.compile(pattern)
+    text = re.sub(r"(?m)(^|\s)#.*$", r"\1", command or "")  # an unquoted comment runs nothing
+    any_segment = False
+    for seg in _SEGMENT_SPLIT.split(text):
+        if not seg.strip() or not rx.search(seg):
+            continue
+        any_segment = True
+        if not segment_is_inert(seg):
+            return True
+    return not any_segment and bool(rx.search(text))
