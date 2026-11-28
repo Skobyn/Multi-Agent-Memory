@@ -31,7 +31,7 @@ from .llm import make_llm
 from .pinning import render_briefing, render_pinned, render_pinned_ex
 from .store import LedgerStore
 from .transcript import (KIND_ASSISTANT_TEXT, KIND_USER_TEXT, capture_transcript, looks_injected, own_words, read_turns,
-                         rows_to_turns, split_third_party)
+                         rows_to_turns, split_own_words)
 
 _SUPERSEDE_RE = re.compile(r"\bSUPERSEDE\s+([DCPKR]-\d{4,})\s*:\s*([^\n]+)", re.IGNORECASE)
 
@@ -150,7 +150,8 @@ def _last_human_text(transcript_path: str | None, max_bytes: int = 400_000) -> s
 def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
     """The recent trajectory for the gate advisor, one line per turn. Only a human turn is labelled ``[user]``: a
     harness-injected turn (an external event, a peer or subagent message, a task notification) is ``[injected]``,
-    and third-party envelope text inside a user turn is split out onto its own ``[injected]`` line. Every body is
+    and envelope, peer, fenced and ``>``-quoted text inside a user turn (``split_own_words``) is split out onto its
+    own ``[quoted or injected]`` line. Every body is
     flattened to one line, so no text can open a ``[user]:`` line of its own. The advisor's ``consistent`` verdict
     clears model flags, so third-party text read as the user could otherwise talk it out of a rule (arXiv
     2611.32194: an authorizer that cannot see who wrote which bytes grants what the forger wrote)."""
@@ -162,10 +163,11 @@ def _trajectory_slice(transcript_path: str | None, max_turns: int) -> str:
             elif not t.is_human:
                 lines.append(f"[injected]: {one_line(t.text)[:600]}")
             else:
-                own, third = split_third_party(t.text)
+                own, quoted = split_own_words(t.text)
                 if one_line(own):
                     lines.append(f"[user]: {one_line(own)[:600]}")
-                lines.extend(f"[injected]: {one_line(seg)[:600]}" for seg in third)
+                if one_line(quoted):
+                    lines.append(f"[quoted or injected]: {one_line(quoted)[:600]}")
         elif t.kind == "tool_use":
             brief = (t.tool_input or {}).get("file_path") or (t.tool_input or {}).get("command") or ""
             lines.append(f"[tool {one_line(t.tool_name)}]: {one_line(brief)[:200]}")

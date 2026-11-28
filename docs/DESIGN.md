@@ -876,3 +876,22 @@ settings file that touches hooks or `EPISTEMIC_*` gets an advisory and a user-fa
 as `monitor_tamper`. A per-project fingerprint of the merged config is checked at SessionStart and before every
 gated call, and the user is told once which keys changed. Deny citations keep stored text on one line and tag
 unverified user quotes.
+
+## Addendum (2026-11-28): process rules need a real run, the advisor sees who spoke
+
+From `docs/RESEARCH-2026-11-28.md` (2611.24185, 2611.32194, 2611.27095).
+
+`command_requires_prior` matches both `pattern` and `prior_pattern` per shell segment (`runs_matching`). A segment
+does not count when:
+
+- its program only prints, searches or reads (`echo`, `grep`, `cat`, `ls`, and read-only git subcommands), and the
+  pattern matches only in its arguments;
+- a dry-mode flag is present: `--help`, `--version`, `--collect-only`, `--co` or `--dry-run` for any program, or
+  `-h` or `-V` for pytest, tox or nox.
+
+So `echo pytest` no longer clears a commit, and `grep "git commit"` no longer demands a test run. A rule whose step
+is `git status` is still satisfied by `git status`. The prior step's exit status is still not checked (11-14 item 2).
+
+The gate advisor's trajectory slice labels only human turns `[user]`. Injected turns are `[injected]`, and quoted
+or envelope text inside a user turn is `[quoted or injected]`. Every body is on one line, and the advisor prompt
+says that only `[user]` lines carry user authority.

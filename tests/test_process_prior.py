@@ -57,3 +57,31 @@ def test_pattern_spanning_an_operator_falls_back_to_whole_text():
 def test_bad_pattern_raises():
     with pytest.raises(Exception):
         runs_matching("pytest", "(")
+
+
+@pytest.mark.parametrize("prior_pattern,prior", [(r"\bgit\s+status\b", "git status --porcelain"),
+                                                 (r"\bgit\s+diff\b", "git diff --check"),
+                                                 (r"\bls\s+-la\s+dist\b", "ls -la dist"),
+                                                 (r"\bgrep\b.*TODO", "grep -rn TODO src"),
+                                                 (r"\bpg_dump\b", "pg_dump -h localhost db > backup.sql"),
+                                                 (r"\bctest\b", "ctest -V"),
+                                                 (r"\bmvn\b.*\btest\b", "mvn -V test")])
+def test_prior_step_that_is_itself_a_reader_or_uses_short_flags(cfg, store, prior_pattern, prior):
+    # review of the diff 2026-11-28: a rule whose step IS `git status` must be satisfiable, and `-h`/`-V` mean "run"
+    # to most tools (pg_dump host, ctest verbose)
+    e = make_entry(store, type="process", statement="Do the step before every commit.",
+                   falsifiers=[{"kind": "command_requires_prior", "pattern": r"\bgit\s+commit\b",
+                                "prior_pattern": prior_pattern, "window": 30}])
+    res = GatePipeline(store, cfg, dm=FakeDM(default=0.97), llm=None).evaluate(
+        "Bash", {"command": "git commit -m x"}, "s1", history=[{"tool": "Bash", "command": prior, "decision": "allow"}])
+    assert res.trips == [] and res.cleared == [e.id]
+
+
+@pytest.mark.parametrize("cmd", ["pytest -h", "tox -V", "pytest --help"])
+def test_runner_help_does_not_satisfy(cmd):
+    assert not runs_matching(cmd, r"\bpytest\b|\btox\b")
+
+
+@pytest.mark.parametrize("cmd", ["git tag -a v1.2 -m rel", "git branch -D old"])
+def test_state_changing_git_subcommands_still_trigger(cmd):
+    assert runs_matching(cmd, r"\bgit\s+(tag|branch)\b")

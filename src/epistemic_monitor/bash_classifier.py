@@ -89,35 +89,50 @@ _INERT_PROGRAMS = frozenset({
     "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "less", "more", "head", "tail", "man",
     "which", "whereis", "type", "history", "ls", "wc", "sort", "uniq", ":", "true", "false", "#",
 })
-_INERT_GIT = frozenset({"log", "show", "grep", "blame", "diff", "status", "branch", "tag", "notes", "config", "help",
-                        "reflog", "shortlog"})
+_INERT_GIT = frozenset({"log", "show", "grep", "blame", "diff", "status", "help", "reflog", "shortlog"})
 _PREFIX_WORDS = frozenset({"sudo", "time", "nice", "nohup", "exec", "command", "builtin", "env", "then", "do",
                            "else", "!", "{"})
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-# flags that make a test or build runner list, explain or describe instead of run
-_DRY_FLAGS = frozenset({"--co", "--collect-only", "--help", "-h", "--version", "-V", "--dry-run"})
+# flags that make a runner list, explain or describe instead of run. The short forms mean something else to many
+# tools (`pg_dump -h host`, `ctest -V`, `docker run -h name`), so they count only for the test runners named here.
+_DRY_FLAGS = frozenset({"--co", "--collect-only", "--help", "--version", "--dry-run"})
+_SHORT_DRY_FLAGS = frozenset({"-h", "-V"})
+_SHORT_DRY_PROGRAMS = frozenset({"pytest", "py.test", "tox", "nox"})
+_WORD = re.compile(r"\S+")
+_MAX_COMMAND = 65536
 
 
-def _program(words: list[str]) -> tuple[str, list[str]]:
+def _program(segment: str) -> tuple[str, list[str], int]:
+    """(program name, its arguments, end offset in ``segment`` of the program word, or of the git subcommand)."""
+    words = list(_WORD.finditer(segment))
     i = 0
-    while i < len(words) and (words[i] in _PREFIX_WORDS or _ASSIGNMENT.match(words[i])):
+    while i < len(words) and (words[i].group() in _PREFIX_WORDS or _ASSIGNMENT.match(words[i].group())):
         i += 1
-    rest = words[i:]
-    return (rest[0].rsplit("/", 1)[-1] if rest else ""), rest[1:]
+    if i >= len(words):
+        return "", [], 0
+    prog, end = words[i].group().rsplit("/", 1)[-1], words[i].end()
+    args = [w.group() for w in words[i + 1:]]
+    if prog == "git":
+        sub = next((w for w in words[i + 1:] if not w.group().startswith("-")), None)
+        if sub is not None:
+            end = sub.end()
+    return prog, args, end
 
 
-def segment_is_inert(segment: str) -> bool:
-    """True when the segment's program only prints, searches or reads text, or a runner is asked for a dry mode."""
-    words = segment.split()
-    prog, args = _program(words)
+def segment_is_inert(segment: str, rx: re.Pattern | None = None) -> bool:
+    """True when the segment's program only prints, searches or reads text, or a runner is asked for a dry mode. A
+    pattern that matches the program word itself (a rule whose step IS `git status` or `ls dist`) is not made
+    inert by it: only a mention in the arguments is."""
+    prog, args, end = _program(segment)
     if not prog or prog.startswith("#"):
         return True
+    if any(a in _DRY_FLAGS for a in args) or (prog in _SHORT_DRY_PROGRAMS and any(a in _SHORT_DRY_FLAGS for a in args)):
+        return True
+    if rx is not None and any(m.start() < end for m in rx.finditer(segment)):
+        return False
     if prog in _INERT_PROGRAMS:
         return True
-    if prog == "git":
-        sub = next((a for a in args if not a.startswith("-")), "")
-        return sub in _INERT_GIT
-    return any(a in _DRY_FLAGS for a in args)
+    return prog == "git" and next((a for a in args if not a.startswith("-")), "") in _INERT_GIT
 
 
 def runs_matching(command: str, pattern: str) -> bool:
@@ -126,12 +141,12 @@ def runs_matching(command: str, pattern: str) -> bool:
     no single segment but does match the whole command (it spans an operator) falls back to the whole-text match.
     Raises ``re.error`` on a bad pattern, as ``re.search`` does."""
     rx = re.compile(pattern)
-    text = re.sub(r"(?m)(^|\s)#.*$", r"\1", command or "")  # an unquoted comment runs nothing
+    text = re.sub(r"(?m)(^|\s)#.*$", r"\1", (command or "")[:_MAX_COMMAND])  # an unquoted comment runs nothing
     any_segment = False
     for seg in _SEGMENT_SPLIT.split(text):
         if not seg.strip() or not rx.search(seg):
             continue
         any_segment = True
-        if not segment_is_inert(seg):
+        if not segment_is_inert(seg, rx):
             return True
     return not any_segment and bool(rx.search(text))
